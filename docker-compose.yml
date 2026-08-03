@@ -1,0 +1,36 @@
+# RL - Trade Bot — container orchestration.
+#   rl-tradebot : the Streamlit dashboard (always up). Controls the bot via the Docker socket.
+#   rl-bot      : the trading loop. Behind the "trading" profile, so `docker compose up` (and every
+#                 deploy) does NOT auto-start trading — you press Start on the dashboard.
+# Code + runtime data live on the host at this folder and are bind-mounted to /app in both containers,
+# so both see the same bot_state.json / trade_history.csv / logs, and .env never enters the image.
+
+services:
+  rl-tradebot:
+    build: .
+    image: rl-tradebot:latest
+    container_name: rl-tradebot
+    working_dir: /app
+    command: streamlit run app.py --server.port 8502 --server.address 0.0.0.0 --server.headless true
+    env_file: .env
+    environment:
+      RL_CONTROL: docker          # tells the dashboard to Start/Stop the bot via the Docker socket
+    volumes:
+      - ./:/app                              # code + runtime data (shared with rl-bot)
+      - /var/run/docker.sock:/var/run/docker.sock   # lets the Start/Stop buttons control the rl-bot container
+    ports:
+      - "8502:8502"
+    restart: unless-stopped
+
+  rl-bot:
+    build: .
+    image: rl-tradebot:latest
+    container_name: rl-bot
+    working_dir: /app
+    # stdout -> bot.log so the dashboard's activity feed can read it (same file the loop writes)
+    command: sh -c "python bot.py auto 1000 >> bot.log 2>&1"
+    env_file: .env
+    volumes:
+      - ./:/app
+    restart: unless-stopped
+    profiles: ["trading"]         # not started by `docker compose up` — the dashboard starts it

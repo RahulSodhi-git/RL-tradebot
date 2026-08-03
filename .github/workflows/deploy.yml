@@ -1,0 +1,66 @@
+name: Deploy to Oracle
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}          # also lets you trigger a deploy by hand from the Actions tab
+
+# Edit these two if your VM's IP or user ever changes. The SSH key is a repo Secret (ORACLE_SSH_KEY).
+env:
+  ORACLE_HOST: "161.118.176.44"
+  ORACLE_USER: "ubuntu"
+  APP_DIR: "/home/ubuntu/rl-tradebot"
+
+concurrency:                     # never run two deploys at once
+  group: deploy-oracle
+  cancel-in-progress: true
+
+jobs:
+  ci:
+    name: Compile check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: py_compile all modules
+        run: |
+          python -m py_compile bot.py data.py history.py signals.py autobot.py strategies.py \
+            backtest.py indicators.py news.py mcp_server.py trader/__init__.py trader/settings.py \
+            trader/guards.py trader/client.py app.py "pages/1_🤖_Auto_Bot.py" "pages/2_📊_Analysis.py"
+      - name: risk_rules.json is valid JSON
+        run: python -c "import json; json.load(open('risk_rules.json'))"
+
+  deploy:
+    name: Deploy to Oracle VM
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up SSH key
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.ORACLE_SSH_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${ORACLE_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Rsync code to the VM (keeps .env + runtime files untouched)
+        run: |
+          rsync -az --delete \
+            --exclude='.git' --exclude='.github' --exclude='.venv' --exclude='__pycache__' \
+            --exclude='.env' --exclude='bot_state.json' --exclude='bot.pid' \
+            --exclude='*.log' --exclude='trade_history.csv' --exclude='recommendations.json' \
+            --exclude='ui_settings.json' --exclude='.streamlit/secrets.toml' \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            ./ "${ORACLE_USER}@${ORACLE_HOST}:${APP_DIR}/"
+
+      - name: Build image + restart dashboard (bot stays as-is; start it from the dashboard)
+        run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${ORACLE_USER}@${ORACLE_HOST}" \
+            "cd ${APP_DIR} && \
+             docker compose build && \
+             docker compose up -d --force-recreate rl-tradebot && \
+             docker compose --profile trading up -d --no-start rl-bot && \
+             echo '✅ Deployed. Dashboard restarted; the bot container is on the latest image (start it from the dashboard).'"

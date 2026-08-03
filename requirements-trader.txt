@@ -1,0 +1,4 @@
+# Half 2 (trading) dependencies — install with: pip install -r requirements-trader.txt
+python-binance
+mcp
+python-dotenv

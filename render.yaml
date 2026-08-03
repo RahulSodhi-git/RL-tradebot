@@ -1,0 +1,10 @@
+# Render deployment (free tier). Pick a NON-US region so Binance isn't geo-blocked.
+services:
+  - type: web
+    name: tradebot
+    runtime: python
+    region: frankfurt          # non-US (or: singapore). NEVER oregon/ohio/virginia (US = Binance blocked)
+    plan: free
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
