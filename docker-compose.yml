@@ -5,8 +5,6 @@ services:
     container_name: rl-tradebot
     working_dir: /app
     command: streamlit run app.py --server.port 8502 --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false
-    env_file:
-      - .env
     volumes:
       - ./data:/app/data
       - ./models:/app/models
@@ -14,4 +12,3 @@ services:
     ports:
       - "8502:8502"
     restart: unless-stopped
-
