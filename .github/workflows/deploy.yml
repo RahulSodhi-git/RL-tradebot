@@ -49,6 +49,8 @@ jobs:
 
       - name: Rsync dashboard code to Oracle
         run: |
+          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${ORACLE_USER}@${ORACLE_HOST}" \
+            "mkdir -p ${APP_DIR} && rm -rf ${APP_DIR}/pages ${APP_DIR}/_legacy_rule_bot"
           rsync -az --delete \
             --exclude='.git' \
             --exclude='.venv' \
@@ -69,7 +71,10 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${ORACLE_USER}@${ORACLE_HOST}" \
             "cd ${APP_DIR} && \
              mkdir -p data/raw data/processed data/shadow models reports && \
-             docker compose down --remove-orphans || true && \
-             docker compose build && \
-             docker compose up -d --force-recreate rl-tradebot && \
-             docker compose ps"
+             docker rm -f rl-tradebot || true && \
+             docker compose -p rl-tradebot down --remove-orphans || true && \
+             docker compose -p rl-tradebot build --no-cache && \
+             docker compose -p rl-tradebot up -d --force-recreate --remove-orphans rl-tradebot && \
+             docker exec rl-tradebot python -c \"from pathlib import Path; text=Path('/app/app.py').read_text(); assert 'AI Market Prediction Lab' in text\" && \
+             docker compose -p rl-tradebot ps && \
+             docker logs --tail 80 rl-tradebot"
