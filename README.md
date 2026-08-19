@@ -1,48 +1,69 @@
-# TradeBot — Half 1: Strategy Analyzer
+# AI Tradebot Lab
 
-A simple, clean web app that backtests **29 trading strategies** (long/short + leverage) on
-real Binance data and shows **which strategy gives the best profit chance (win rate %)**.
+Fresh ML/RL-first trading research system.
 
-- ✅ Uses **public** market data only — **no API key, no trading, no risk**.
-- ✅ Analysis only. (Half 2 = execution + auto-bot — see `README-trader.md`.)
+This project starts in **research and shadow mode only**. It does not place live orders.
+The goal is to build reliable market understanding before any execution code exists.
 
-## Setup (one time)
+## Step 1: Foundation
 
-```powershell
-cd C:\Users\rsodh\PycharmProjects\tradebot
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+The first version contains:
+
+- Typed market/trade schemas.
+- Feature engineering from OHLCV candles.
+- Specialist agents:
+  - regime agent
+  - direction agent
+  - volatility agent
+  - flow agent
+  - risk agent
+- A decision engine that combines agent opinions.
+- A shadow logger for training data.
+- A simple CLI smoke run.
+
+## Project Layout
+
+```text
+src/ai_tradebot/
+  agents/           Specialist agents.
+  core/             Shared schemas and config.
+  data/             Data loading helpers.
+  features/         Feature engineering.
+  training/         Dataset and shadow logging tools.
+  decision_engine.py
+  cli.py
+tests/
+  test_smoke.py
 ```
 
+The old rule-based bot has been preserved in `_legacy_rule_bot/`.
+
 ## Run
+
+```powershell
+python -m pip install -r requirements.txt
+python -m ai_tradebot.cli --demo
+python -m pytest
+```
+
+Run the Streamlit research dashboard:
 
 ```powershell
 streamlit run app.py
 ```
 
-A browser tab opens. Pick a coin + timeframe, press **Run Backtest**, and read the results.
+## Deployment
 
-## What each file does
+Pushes to `main` deploy the ML dashboard to Oracle through GitHub Actions.
+See `DEPLOY.md`.
 
-| File | Job |
-|------|-----|
-| `app.py` | The web UI + results page (filter/sort, ranked table, charts) |
-| `data.py` | Fetches candles from Binance public API (spot + futures) |
-| `indicators.py` | Technical indicators (Supertrend, ADX, ATR, RSI, MACD, …) |
-| `strategies.py` | The 29 strategies (Basic / Medium / Advanced) |
-| `backtest.py` | Runs each strategy on history — return, win rate, trades, drawdown, leverage |
+If running directly from the repo without installing the package:
 
-## Strategies included (29)
+```powershell
+$env:PYTHONPATH = "src"
+python -m ai_tradebot.cli --demo
+```
 
-- **Basic (9):** SMA Cross, EMA Cross, EMA Fast, Price vs 200 EMA, RSI, Stochastic, Williams %R, Momentum, Buy & Hold
-- **Medium (11):** MACD, Bollinger (Mean-Rev + Breakout), CCI, Parabolic SAR, Keltner, Donchian+ADX, VWAP, Heikin-Ashi, TRIX, Awesome Oscillator
-- **Advanced (9):** Supertrend, Supertrend Fusion, Regime-Adaptive, Supertrend+RSI+Volume, Ichimoku, MACD+RSI, ATR Breakout, Dual Momentum, Z-Score
+## Design Rule
 
-Every strategy can go **long and short**, and the backtest supports **leverage**.
-
-> ⚠️ Backtests show past performance only. Not financial advice.
-
-## The two halves
-- **Half 1 — Analysis** (this file): backtest + rank strategies. No keys, no risk.
-- **Half 2 — Execution + Auto-bot** (`README-trader.md`): connect to Binance, place orders via an MCP server, and run a hands-off auto-trading bot on testnet.
+Models advise. Risk controls decide what is allowed. Execution comes later.

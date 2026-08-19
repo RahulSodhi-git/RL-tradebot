@@ -1,4 +1,8 @@
-streamlit
-pandas
 numpy
+pandas
+plotly
+python-dotenv
 requests
+scikit-learn
+streamlit
+pytest

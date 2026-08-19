@@ -1,36 +1,37 @@
-name: Deploy to Oracle
+name: Deploy ML Dashboard to Oracle
 
 on:
   push:
     branches: [main]
-  workflow_dispatch: {}          # also lets you trigger a deploy by hand from the Actions tab
+  workflow_dispatch: {}
 
-# Edit these two if your VM's IP or user ever changes. The SSH key is a repo Secret (ORACLE_SSH_KEY).
 env:
   ORACLE_HOST: "161.118.176.44"
   ORACLE_USER: "ubuntu"
   APP_DIR: "/home/ubuntu/rl-tradebot"
 
-concurrency:                     # never run two deploys at once
-  group: deploy-oracle
+concurrency:
+  group: deploy-oracle-ml-dashboard
   cancel-in-progress: true
 
 jobs:
   ci:
-    name: Compile check
+    name: Test ML dashboard
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: py_compile all modules
+      - name: Install dependencies
         run: |
-          python -m py_compile bot.py data.py history.py signals.py autobot.py strategies.py \
-            backtest.py indicators.py news.py mcp_server.py trader/__init__.py trader/settings.py \
-            trader/guards.py trader/client.py app.py "pages/1_🤖_Auto_Bot.py" "pages/2_📊_Analysis.py"
-      - name: risk_rules.json is valid JSON
-        run: python -c "import json; json.load(open('risk_rules.json'))"
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+      - name: Compile
+        run: python -m compileall -q src tests app.py
+      - name: Tests
+        run: pytest -q
 
   deploy:
     name: Deploy to Oracle VM
@@ -46,21 +47,29 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${ORACLE_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Rsync code to the VM (keeps .env + runtime files untouched)
+      - name: Rsync dashboard code to Oracle
         run: |
           rsync -az --delete \
-            --exclude='.git' --exclude='.github' --exclude='.venv' --exclude='__pycache__' \
-            --exclude='.env' --exclude='bot_state.json' --exclude='bot.pid' \
-            --exclude='*.log' --exclude='trade_history.csv' --exclude='recommendations.json' \
-            --exclude='ui_settings.json' --exclude='.streamlit/secrets.toml' \
+            --exclude='.git' \
+            --exclude='.venv' \
+            --exclude='__pycache__' \
+            --exclude='.env' \
+            --exclude='data/raw' \
+            --exclude='data/processed' \
+            --exclude='data/shadow' \
+            --exclude='models' \
+            --exclude='reports' \
+            --exclude='*.log' \
+            --exclude='.streamlit/secrets.toml' \
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
             ./ "${ORACLE_USER}@${ORACLE_HOST}:${APP_DIR}/"
 
-      - name: Build image + restart dashboard (bot stays as-is; start it from the dashboard)
+      - name: Build and restart Streamlit dashboard
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${ORACLE_USER}@${ORACLE_HOST}" \
             "cd ${APP_DIR} && \
+             mkdir -p data/raw data/processed data/shadow models reports && \
+             docker compose down --remove-orphans || true && \
              docker compose build && \
              docker compose up -d --force-recreate rl-tradebot && \
-             docker compose --profile trading up -d --no-start rl-bot && \
-             echo '✅ Deployed. Dashboard restarted; the bot container is on the latest image (start it from the dashboard).'"
+             docker compose ps"

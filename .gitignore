@@ -1,16 +1,27 @@
-# --- secrets (never commit) ---
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+_old_locked_venv_DELETE_AFTER_RESTART/
+
+# Virtual environments
+.venv/
+venv/
+
+# Secrets and local config
 .env
 .env.*
 !.env.example
-.streamlit/secrets.toml
 
-# --- local env / caches ---
-__pycache__/
-*.pyc
-.venv/
-*.pkl
+# Generated data and models
+data/raw/
+data/processed/
+data/shadow/
+models/
+reports/
 
-# --- runtime data written by the bot (stays on the VM, never in the repo) ---
+# Legacy runtime files
 bot_state.json
 bot.pid
 bot.log
