@@ -28,7 +28,7 @@ TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
 DEFAULT_MODELS = ["logistic_regression", "random_forest", "hist_gradient_boosting"]
 
 
-st.set_page_config(page_title="AI Tradebot Lab", page_icon=".", layout="wide")
+st.set_page_config(page_title="AI Market Prediction Lab", page_icon="chart_with_upwards_trend", layout="wide")
 
 
 def init_state() -> None:
@@ -41,113 +41,138 @@ def init_state() -> None:
 
 def main() -> None:
     init_state()
-    st.title("AI Tradebot Lab")
-    st.caption("Market-direction prediction only. No live trading, no Binance keys, no order execution.")
+    st.title("AI Market Prediction Lab")
+    st.caption("Simple first version: get Binance candles, train direction models, and check if UP/DOWN predictions were correct. No trading. No orders.")
 
+    settings = render_settings()
+
+    show_stage_header("1", "Check Binance Data", "First we verify what Binance gives us: columns, candles, and sample symbols.")
+    render_data_check(settings)
+
+    show_stage_header("2", "Build Prediction Dataset", "Then we turn candles into features and labels: did price go UP, DOWN, or stay NEUTRAL after the chosen horizon?")
+    render_dataset_builder(settings)
+
+    show_stage_header("3", "Train Models", "Next we train multiple models in parallel for each timeframe and measure prediction quality.")
+    render_training(settings)
+
+    show_stage_header("4", "View Candles + Predictions", "Finally we plot real candles with model predictions on top, so you can see where the model was right or wrong.")
+    render_prediction_view()
+
+
+def render_settings() -> dict:
     with st.sidebar:
-        st.header("Binance Source")
-        data_source_label = st.radio(
-            "Market data source",
-            ["Mainnet public market data", "Futures testnet market data"],
-            index=0,
-            help="Mainnet public data is usually best for model training. Testnet is useful for account/execution checks.",
+        st.header("Simple Setup")
+        source_label = st.radio(
+            "Binance data",
+            ["Mainnet public candles", "Futures testnet candles"],
+            help="Use mainnet public candles for normal model training. Use testnet when you only want to test the sandbox connection.",
         )
-        data_source = "testnet" if data_source_label.startswith("Futures") else "mainnet"
+        source = "testnet" if source_label.startswith("Futures") else "mainnet"
 
-        st.header("Dataset")
-        universe_limit = st.slider("Symbols from Binance universe", 5, 260, 40, 5)
+        st.subheader("Data")
+        symbols_limit = st.slider("Coins to use", 5, 260, 25, 5)
+        timeframes = st.multiselect("Candle timeframes", TIMEFRAMES, default=["15m", "1h", "4h"])
+        candle_limit = st.slider("Candles per coin/timeframe", 200, 1500, 600, 100)
         min_quote_volume = st.number_input("Minimum 24h quote volume", min_value=0, value=50_000_000, step=10_000_000)
-        candle_limit = st.slider("Candles per symbol/timeframe", 200, 1500, 800, 100)
-        selected_timeframes = st.multiselect("Timeframes", TIMEFRAMES, default=["15m", "1h", "4h"])
-        horizon = st.slider("Future horizon in candles", 1, 24, 4)
-        neutral_threshold = st.slider("Neutral threshold (%)", 0.05, 3.0, 0.30, 0.05) / 100
-        data_workers = st.slider("Parallel data workers", 2, 24, 12)
 
-        st.header("Models")
-        selected_models = st.multiselect("Models", available_model_names(), default=DEFAULT_MODELS)
-        test_fraction = st.slider("Test split from newest data (%)", 10, 40, 25, 5) / 100
-        model_workers = st.slider("Parallel model workers", 1, 8, 3)
+        st.subheader("Prediction Label")
+        horizon = st.slider("Predict after N candles", 1, 24, 4)
+        neutral_threshold = st.slider("Neutral zone (%)", 0.05, 3.0, 0.30, 0.05) / 100
 
-    tab_source, tab_data, tab_train, tab_eval, tab_candles = st.tabs(
-        ["Data Source", "Data Builder", "Live Training", "Evaluation", "Candles + Predictions"]
-    )
+        st.subheader("Training")
+        models = st.multiselect("Models", available_model_names(), default=DEFAULT_MODELS)
+        test_fraction = st.slider("Newest data for testing (%)", 10, 40, 25, 5) / 100
+        data_workers = st.slider("Parallel data jobs", 2, 24, 10)
+        model_workers = st.slider("Parallel model jobs", 1, 8, 3)
 
-    with tab_source:
-        render_data_source(data_source, selected_timeframes[0] if selected_timeframes else "1h")
+    return {
+        "source": source,
+        "symbols_limit": symbols_limit,
+        "timeframes": timeframes,
+        "candle_limit": candle_limit,
+        "min_quote_volume": min_quote_volume,
+        "horizon": horizon,
+        "neutral_threshold": neutral_threshold,
+        "models": models,
+        "test_fraction": test_fraction,
+        "data_workers": data_workers,
+        "model_workers": model_workers,
+    }
 
-    with tab_data:
-        render_data_builder(
-            data_source,
-            universe_limit,
-            min_quote_volume,
-            candle_limit,
-            selected_timeframes,
-            horizon,
-            neutral_threshold,
-            data_workers,
+
+def show_stage_header(number: str, title: str, text: str) -> None:
+    st.divider()
+    st.subheader(f"{number}. {title}")
+    st.write(text)
+
+
+def render_data_check(settings: dict) -> None:
+    left, middle, right = st.columns([1, 1, 1])
+    symbol = left.text_input("Sample coin", "BTCUSDT").upper()
+    timeframe = middle.selectbox("Sample timeframe", TIMEFRAMES, index=2)
+    limit = right.slider("Sample candles", 80, 500, 160, 20)
+
+    c1, c2 = st.columns([1, 1])
+    if c1.button("Check candle data", type="primary", use_container_width=True):
+        try:
+            info = inspect_market_data(settings["source"], symbol=symbol, timeframe=timeframe, limit=limit)
+            st.success(f"Binance connection works: {info['source']} endpoint")
+            a, b, c = st.columns(3)
+            a.metric("Rows returned", info["rows"])
+            b.metric("Available sample symbols", info["symbols_sample_count"])
+            c.metric("Columns", len(info["columns"]))
+            st.plotly_chart(raw_candle_chart(info["candles"], symbol, timeframe, settings["source"]), use_container_width=True)
+            with st.expander("Show raw Binance rows and columns"):
+                st.write(info["columns"])
+                st.dataframe(info["candles"].tail(25), use_container_width=True, hide_index=True)
+                st.write(info["symbols_sample"])
+        except Exception as exc:
+            st.error(f"Could not read Binance candles: {exc}")
+
+    if c2.button("Check testnet account keys", use_container_width=True):
+        result = test_futures_testnet_account()
+        if result.get("ok"):
+            st.success("Testnet account read works. Keys are loaded.")
+            st.dataframe(pd.DataFrame(result.get("assets", [])), use_container_width=True, hide_index=True)
+        else:
+            st.warning(result.get("reason", "Testnet account check failed."))
+
+
+def render_dataset_builder(settings: dict) -> None:
+    jobs_count = settings["symbols_limit"] * len(settings["timeframes"])
+    a, b, c, d = st.columns(4)
+    a.metric("Coins", settings["symbols_limit"])
+    b.metric("Timeframes", len(settings["timeframes"]))
+    c.metric("Candles each", settings["candle_limit"])
+    d.metric("Download jobs", jobs_count)
+
+    disabled = not settings["timeframes"]
+    if st.button("Build dataset", type="primary", disabled=disabled, use_container_width=True):
+        st.session_state.errors = []
+        try:
+            symbols = get_usdt_perp_symbols(
+                limit=settings["symbols_limit"],
+                min_quote_volume=settings["min_quote_volume"],
+                source=settings["source"],
+            )
+        except Exception as exc:
+            st.error(f"Could not load symbol list from Binance: {exc}")
+            return
+
+        jobs = [
+            CandleRequest(symbol, timeframe, settings["candle_limit"])
+            for symbol in symbols
+            for timeframe in settings["timeframes"]
+        ]
+        candles, errors = download_candles(jobs, settings)
+        dataset = build_direction_dataset(
+            candles,
+            horizon=settings["horizon"],
+            neutral_threshold=settings["neutral_threshold"],
         )
 
-    with tab_train:
-        render_training(selected_models, selected_timeframes, test_fraction, model_workers)
-
-    with tab_eval:
-        render_evaluation()
-
-    with tab_candles:
-        render_candle_view()
-
-
-def render_data_builder(
-    data_source: str,
-    universe_limit: int,
-    min_quote_volume: float,
-    candle_limit: int,
-    selected_timeframes: list[str],
-    horizon: int,
-    neutral_threshold: float,
-    data_workers: int,
-) -> None:
-    st.subheader("Build Multi-Timeframe Prediction Dataset")
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Symbols", universe_limit)
-    c2.metric("Timeframes", len(selected_timeframes))
-    c3.metric("Candles each", candle_limit)
-    c4.metric("Jobs", universe_limit * len(selected_timeframes))
-    st.info(
-        "Training source: "
-        + ("Binance Futures TESTNET market data" if data_source == "testnet" else "Binance MAINNET public market data")
-    )
-
-    if st.button("Download candles and build labels", type="primary", disabled=not selected_timeframes):
-        st.session_state.errors = []
-        symbols = get_usdt_perp_symbols(limit=universe_limit, min_quote_volume=min_quote_volume, source=data_source)
-        jobs = [CandleRequest(symbol, timeframe, candle_limit) for symbol in symbols for timeframe in selected_timeframes]
-        candles: dict[tuple[str, str], pd.DataFrame] = {}
-        progress = st.progress(0)
-        status = st.empty()
-        errors = []
-        done = 0
-
-        with ThreadPoolExecutor(max_workers=data_workers) as executor:
-            futures = {
-                executor.submit(fetch_klines, job.symbol, job.timeframe, job.limit, data_source): job for job in jobs
-            }
-            for future in as_completed(futures):
-                job = futures[future]
-                done += 1
-                try:
-                    df = future.result()
-                    candles[(job.symbol, job.timeframe)] = df
-                    save_candles(df, job.symbol, job.timeframe, source=data_source)
-                    status.info(f"Downloaded {job.symbol} {job.timeframe} ({done}/{len(jobs)})")
-                except Exception as exc:
-                    errors.append(f"{job.symbol} {job.timeframe}: {exc}")
-                    status.warning(f"Skipped {job.symbol} {job.timeframe}: {exc}")
-                progress.progress(done / max(len(jobs), 1))
-
-        dataset = build_direction_dataset(candles, horizon=horizon, neutral_threshold=neutral_threshold)
         if dataset.empty:
-            st.error("No dataset was built. Binance may be unreachable, or not enough candles were returned.")
+            st.error("No training dataset was created. Try fewer filters, more candles, or mainnet public candles.")
             st.session_state.errors = errors
             return
 
@@ -155,83 +180,64 @@ def render_data_builder(
         st.session_state.candles = candles
         st.session_state.dataset = dataset
         st.session_state.errors = errors
-        st.success(f"Dataset built: {len(dataset):,} rows saved to {path}")
+        st.success(f"Dataset ready: {len(dataset):,} rows saved to {path}")
 
     dataset = get_dataset()
     if not dataset.empty:
-        st.markdown("**Dataset Summary**")
         a, b, c = st.columns(3)
-        a.metric("Rows", f"{len(dataset):,}")
-        b.metric("Symbols", dataset["symbol"].nunique())
-        c.metric("Timeframes", dataset["timeframe"].nunique())
+        a.metric("Dataset rows", f"{len(dataset):,}")
+        b.metric("Coins in dataset", dataset["symbol"].nunique())
+        c.metric("Timeframes in dataset", dataset["timeframe"].nunique())
         left, right = st.columns(2)
         left.dataframe(label_balance(dataset), use_container_width=True, hide_index=True)
-        right.dataframe(dataset.groupby(["timeframe"]).size().reset_index(name="rows"), use_container_width=True, hide_index=True)
+        right.dataframe(dataset.groupby("timeframe").size().reset_index(name="rows"), use_container_width=True, hide_index=True)
 
     if st.session_state.errors:
-        with st.expander("Download/build errors"):
+        with st.expander("Download or build errors"):
             st.write(st.session_state.errors[:200])
 
 
-def render_data_source(data_source: str, default_timeframe: str) -> None:
-    st.subheader("Inspect Binance Data Before Feature Engineering")
-    st.write(
-        "Use this page to see what Binance returns before we train models. "
-        "Testnet account access is only used for read-only connectivity checks."
-    )
-    left, right, third = st.columns([1, 1, 1])
-    symbol = left.text_input("Sample symbol", "BTCUSDT").upper()
-    timeframe = right.selectbox("Sample timeframe", TIMEFRAMES, index=TIMEFRAMES.index(default_timeframe) if default_timeframe in TIMEFRAMES else 2)
-    limit = third.slider("Sample candles", 80, 500, 160, 20)
+def download_candles(jobs: list[CandleRequest], settings: dict) -> tuple[dict[tuple[str, str], pd.DataFrame], list[str]]:
+    candles: dict[tuple[str, str], pd.DataFrame] = {}
+    errors: list[str] = []
+    progress = st.progress(0)
+    status = st.empty()
+    done = 0
 
-    if st.button("Inspect selected source", type="primary"):
-        try:
-            info = inspect_market_data(data_source, symbol=symbol, timeframe=timeframe, limit=limit)
-            st.success(f"Connected to {info['source']} endpoint: {info['endpoint']}")
-            a, b, c = st.columns(3)
-            a.metric("Rows returned", info["rows"])
-            b.metric("Sample symbols", info["symbols_sample_count"])
-            c.metric("Columns", len(info["columns"]))
-            st.markdown("**Sample universe symbols**")
-            st.write(info["symbols_sample"])
-            st.markdown("**Raw candle columns**")
-            st.write(info["columns"])
-            st.dataframe(info["candles"].tail(20), use_container_width=True, hide_index=True)
-            st.plotly_chart(raw_candle_chart(info["candles"], symbol, timeframe, data_source), use_container_width=True)
-        except Exception as exc:
-            st.error(f"Could not inspect {data_source}: {exc}")
+    with ThreadPoolExecutor(max_workers=settings["data_workers"]) as executor:
+        futures = {
+            executor.submit(fetch_klines, job.symbol, job.timeframe, job.limit, settings["source"]): job
+            for job in jobs
+        }
+        for future in as_completed(futures):
+            job = futures[future]
+            done += 1
+            try:
+                df = future.result()
+                candles[(job.symbol, job.timeframe)] = df
+                save_candles(df, job.symbol, job.timeframe, source=settings["source"])
+                status.info(f"Downloaded {job.symbol} {job.timeframe} ({done}/{len(jobs)})")
+            except Exception as exc:
+                errors.append(f"{job.symbol} {job.timeframe}: {exc}")
+                status.warning(f"Skipped {job.symbol} {job.timeframe}: {exc}")
+            progress.progress(done / max(len(jobs), 1))
 
-    st.divider()
-    st.markdown("**Futures testnet account check**")
-    st.caption("Requires `.env` with BINANCE_FUTURES_TESTNET_KEY and BINANCE_FUTURES_TESTNET_SECRET.")
-    if st.button("Check testnet account connection"):
-        result = test_futures_testnet_account()
-        if result.get("ok"):
-            st.success("Testnet account read works.")
-            st.dataframe(pd.DataFrame(result.get("assets", [])), use_container_width=True, hide_index=True)
-        else:
-            st.warning(result.get("reason", "Testnet account check failed."))
+    return candles, errors
 
 
-def render_training(
-    selected_models: list[str],
-    selected_timeframes: list[str],
-    test_fraction: float,
-    model_workers: int,
-) -> None:
-    st.subheader("Live Parallel Training")
+def render_training(settings: dict) -> None:
     dataset = get_dataset()
     if dataset.empty:
-        st.info("Build a dataset first.")
+        st.info("Build the dataset first.")
         return
-    if not selected_models or not selected_timeframes:
-        st.info("Select at least one model and one timeframe.")
+    if not settings["models"] or not settings["timeframes"]:
+        st.info("Choose at least one model and one timeframe.")
         return
 
-    jobs = [(model, timeframe) for timeframe in selected_timeframes for model in selected_models]
-    st.write(f"Ready to train `{len(jobs)}` model/timeframe runs.")
+    jobs = [(model, timeframe) for timeframe in settings["timeframes"] for model in settings["models"]]
+    st.write(f"Ready to train {len(jobs)} model/timeframe runs.")
 
-    if st.button("Train selected models", type="primary"):
+    if st.button("Train models", type="primary", use_container_width=True):
         progress = st.progress(0)
         log_box = st.container(height=240)
         rows = []
@@ -239,9 +245,9 @@ def render_training(
         errors = []
         done = 0
 
-        with ThreadPoolExecutor(max_workers=model_workers) as executor:
+        with ThreadPoolExecutor(max_workers=settings["model_workers"]) as executor:
             futures = {
-                executor.submit(train_one, dataset, model, timeframe, test_fraction): (model, timeframe)
+                executor.submit(train_one, dataset, model, timeframe, settings["test_fraction"]): (model, timeframe)
                 for model, timeframe in jobs
             }
             for future in as_completed(futures):
@@ -264,65 +270,45 @@ def render_training(
                         st.error(f"{key}: {exc}")
                 progress.progress(done / max(len(jobs), 1))
 
-        metrics_df = pd.DataFrame(rows)
-        if not metrics_df.empty:
-            metrics_df = metrics_df.sort_values(["timeframe", "accuracy"], ascending=[True, False])
+        metrics = pd.DataFrame(rows)
+        if not metrics.empty:
+            metrics = metrics.sort_values(["timeframe", "accuracy"], ascending=[True, False])
             Path("reports").mkdir(exist_ok=True)
-            metrics_df.to_csv("reports/direction_model_metrics.csv", index=False)
-        st.session_state.metrics = metrics_df
+            metrics.to_csv("reports/direction_model_metrics.csv", index=False)
+
+        st.session_state.metrics = metrics
         st.session_state.predictions = predictions
         st.session_state.errors = errors
-        st.success("Training run complete.")
+        st.success("Training finished.")
 
-    if not st.session_state.metrics.empty:
-        st.dataframe(st.session_state.metrics, use_container_width=True, hide_index=True)
+    metrics = get_metrics()
+    if not metrics.empty:
+        st.dataframe(metrics, use_container_width=True, hide_index=True)
 
-
-def render_evaluation() -> None:
-    st.subheader("Evaluation")
-    metrics = st.session_state.metrics
-    predictions = st.session_state.predictions
-    if metrics.empty:
-        maybe_metrics = Path("reports/direction_model_metrics.csv")
-        if maybe_metrics.exists():
-            metrics = pd.read_csv(maybe_metrics)
-    if metrics.empty:
-        st.info("Train models first.")
-        return
-
-    st.dataframe(metrics, use_container_width=True, hide_index=True)
-
-    if predictions:
-        by_symbol, by_label = grouped_metrics(predictions)
+    if st.session_state.predictions:
+        by_symbol, by_label = grouped_metrics(st.session_state.predictions)
         left, right = st.columns(2)
-        with left:
-            st.markdown("**Best/Worst By Symbol**")
-            st.dataframe(by_symbol, use_container_width=True, hide_index=True)
-        with right:
-            st.markdown("**Prediction Quality By Predicted Class**")
-            st.dataframe(by_label, use_container_width=True, hide_index=True)
-
-        key = st.selectbox("Confusion matrix run", sorted(predictions.keys()))
-        st.dataframe(confusion_for(predictions[key]), use_container_width=True)
+        left.dataframe(by_symbol, use_container_width=True, hide_index=True)
+        right.dataframe(by_label, use_container_width=True, hide_index=True)
+        run_key = st.selectbox("Confusion matrix", sorted(st.session_state.predictions.keys()))
+        st.dataframe(confusion_for(st.session_state.predictions[run_key]), use_container_width=True)
 
 
-def render_candle_view() -> None:
-    st.subheader("Actual Candles With Model Predictions")
+def render_prediction_view() -> None:
     predictions = st.session_state.predictions
     if not predictions:
-        st.info("Train models first. The chart needs model predictions.")
+        st.info("Train models first. Then this chart will show real candles with UP/DOWN/NEUTRAL predictions.")
         return
 
-    key = st.selectbox("Model run", sorted(predictions.keys()), key="chart_run")
-    pred_df = predictions[key]
-    symbols = sorted(pred_df["symbol"].unique())
-    symbol = st.selectbox("Symbol", symbols, key="chart_symbol")
+    run_key = st.selectbox("Model run", sorted(predictions.keys()), key="chart_run")
+    pred_df = predictions[run_key]
+    symbol = st.selectbox("Coin", sorted(pred_df["symbol"].unique()), key="chart_symbol")
     rows = pred_df[pred_df["symbol"] == symbol].sort_values("time").tail(220)
     if rows.empty:
-        st.info("No prediction rows for this symbol.")
+        st.info("No prediction rows for this coin.")
         return
 
-    st.plotly_chart(prediction_candle_chart(rows, symbol, key), use_container_width=True)
+    st.plotly_chart(prediction_candle_chart(rows, symbol, run_key), use_container_width=True)
     st.dataframe(
         rows[["time", "close", "prediction_name", "confidence", "label_name", "future_return", "correct"]]
         .tail(80)
@@ -344,8 +330,9 @@ def prediction_candle_chart(rows: pd.DataFrame, symbol: str, run_key: str) -> go
             name="actual candles",
         )
     )
-    colors = {"UP": "#16a34a", "DOWN": "#dc2626", "NEUTRAL": "#64748b"}
-    symbols = {"UP": "triangle-up", "DOWN": "triangle-down", "NEUTRAL": "circle"}
+
+    colors = {"UP": "#16803c", "DOWN": "#c2410c", "NEUTRAL": "#475569"}
+    markers = {"UP": "triangle-up", "DOWN": "triangle-down", "NEUTRAL": "circle"}
     for label in ["UP", "DOWN", "NEUTRAL"]:
         subset = rows[rows["prediction_name"] == label]
         if subset.empty:
@@ -358,13 +345,12 @@ def prediction_candle_chart(rows: pd.DataFrame, symbol: str, run_key: str) -> go
                 name=f"predicted {label}",
                 marker={
                     "color": colors[label],
-                    "symbol": symbols[label],
+                    "symbol": markers[label],
                     "size": 8 + subset["confidence"] * 8,
                     "line": {"color": "white", "width": 1},
                 },
                 customdata=subset[["label_name", "confidence", "future_return", "correct"]],
                 hovertemplate=(
-                    "prediction=%{fullData.name}<br>"
                     "actual=%{customdata[0]}<br>"
                     "confidence=%{customdata[1]:.2f}<br>"
                     "future return=%{customdata[2]:.2%}<br>"
@@ -372,8 +358,9 @@ def prediction_candle_chart(rows: pd.DataFrame, symbol: str, run_key: str) -> go
                 ),
             )
         )
+
     fig.update_layout(
-        title=f"{symbol} {run_key}: actual candles and predictions",
+        title=f"{symbol} {run_key}: real candles and model predictions",
         xaxis_rangeslider_visible=False,
         height=620,
         margin={"l": 20, "r": 20, "t": 60, "b": 20},
@@ -413,6 +400,18 @@ def get_dataset() -> pd.DataFrame:
         except Exception:
             pass
     return st.session_state.dataset
+
+
+def get_metrics() -> pd.DataFrame:
+    if not st.session_state.metrics.empty:
+        return st.session_state.metrics
+    path = Path("reports/direction_model_metrics.csv")
+    if path.exists():
+        try:
+            st.session_state.metrics = pd.read_csv(path)
+        except Exception:
+            pass
+    return st.session_state.metrics
 
 
 def label_balance(dataset: pd.DataFrame) -> pd.DataFrame:
