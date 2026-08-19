@@ -50,7 +50,9 @@ jobs:
       - name: Rsync dashboard code to Oracle
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${ORACLE_USER}@${ORACLE_HOST}" \
-            "mkdir -p ${APP_DIR} && rm -rf ${APP_DIR}/pages ${APP_DIR}/_legacy_rule_bot"
+            "test '${APP_DIR}' = '/home/ubuntu/rl-tradebot' && \
+             mkdir -p '${APP_DIR}' && \
+             find '${APP_DIR}' -mindepth 1 -maxdepth 1 ! -name '.env' -exec rm -rf {} +"
           rsync -az --delete \
             --exclude='.git' \
             --exclude='.venv' \

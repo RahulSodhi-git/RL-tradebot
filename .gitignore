@@ -14,12 +14,12 @@ venv/
 .env.*
 !.env.example
 
-# Generated data and models
-data/raw/
-data/processed/
-data/shadow/
-models/
-reports/
+# Generated data and model artifacts
+/data/raw/
+/data/processed/
+/data/shadow/
+/models/
+/reports/
 
 # Legacy runtime files
 bot_state.json
