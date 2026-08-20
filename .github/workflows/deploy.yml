@@ -30,6 +30,8 @@ jobs:
           pip install -e .
       - name: Compile
         run: python -m compileall -q src tests app.py
+      - name: Import check
+        run: python -c "from ai_tradebot.training.direction_models import train_one; print(train_one.__name__)"
       - name: Tests
         run: pytest -q
 
@@ -78,5 +80,6 @@ jobs:
              docker compose -p rl-tradebot build --no-cache && \
              docker compose -p rl-tradebot up -d --force-recreate --remove-orphans rl-tradebot && \
              docker exec rl-tradebot python -c \"from pathlib import Path; text=Path('/app/app.py').read_text(); assert 'AI Market Prediction Lab' in text\" && \
+             docker exec rl-tradebot python -c \"from ai_tradebot.training.direction_models import train_one; print(train_one.__name__)\" && \
              docker compose -p rl-tradebot ps && \
              docker logs --tail 80 rl-tradebot"

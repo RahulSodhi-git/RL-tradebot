@@ -16,7 +16,7 @@ from ai_tradebot.data.binance import (
     test_futures_testnet_account,
 )
 from ai_tradebot.features.dataset import build_direction_dataset, load_dataset, save_dataset
-from ai_tradebot.models.training import (
+from ai_tradebot.training.direction_models import (
     available_model_names,
     confusion_for,
     grouped_metrics,

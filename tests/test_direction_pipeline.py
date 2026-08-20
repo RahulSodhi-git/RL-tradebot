@@ -4,7 +4,7 @@ import pandas as pd
 
 from ai_tradebot.data.demo import make_demo_ohlcv
 from ai_tradebot.features.dataset import build_direction_dataset
-from ai_tradebot.models.training import train_one
+from ai_tradebot.training.direction_models import train_one
 
 
 def test_direction_dataset_and_model_training():
@@ -25,4 +25,3 @@ def test_direction_dataset_and_model_training():
     assert 0 <= metrics["accuracy"] <= 1
     assert isinstance(predictions, pd.DataFrame)
     assert {"prediction_name", "confidence", "correct"}.issubset(predictions.columns)
-
