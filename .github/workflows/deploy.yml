@@ -28,13 +28,6 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${ORACLE_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Prepare Oracle host
-        run: |
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${ORACLE_USER}@${ORACLE_HOST}" \
-            "set -e; \
-             sudo apt-get update -y; \
-             sudo apt-get install -y python3-venv python3-pip rsync curl psmisc"
-
       - name: Rsync dashboard code to Oracle
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${ORACLE_USER}@${ORACLE_HOST}" \
@@ -61,25 +54,18 @@ jobs:
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
             ./ "${ORACLE_USER}@${ORACLE_HOST}:${APP_DIR}/"
 
-      - name: Install and restart Streamlit dashboard
+      - name: Build and restart Docker dashboard
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${ORACLE_USER}@${ORACLE_HOST}" \
             "set -e; \
              cd ${APP_DIR}; \
              mkdir -p data/raw data/processed data/shadow models reports; \
-             python3 -m venv .venv; \
-             . .venv/bin/activate; \
-             python -m pip install --upgrade pip; \
-             pip install -r requirements.txt; \
-             pip install -e .; \
-             python -m compileall -q src tests app.py; \
-             python -c \"from pathlib import Path; text=Path('app.py').read_text(); assert 'AI Market Prediction Lab' in text\"; \
-             python -c \"from ai_tradebot.training.direction_models import train_one; print(train_one.__name__)\"; \
              docker rm -f rl-tradebot 2>/dev/null || true; \
              docker compose -p rl-tradebot down --remove-orphans 2>/dev/null || true; \
-             pkill -f '[s]treamlit run app.py.*8502' 2>/dev/null || true; \
-             sudo fuser -k 8502/tcp 2>/dev/null || true; \
-             nohup .venv/bin/python -m streamlit run app.py --server.port 8502 --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false > streamlit.log 2>&1 & \
+             docker compose -p rl-tradebot build --no-cache; \
+             docker run --rm rl-tradebot:latest python -c \"from pathlib import Path; text=Path('/app/app.py').read_text(); assert 'AI Market Prediction Lab' in text\"; \
+             docker run --rm rl-tradebot:latest python -c \"from ai_tradebot.training.direction_models import train_one; print(train_one.__name__)\"; \
+             docker compose -p rl-tradebot up -d --force-recreate --remove-orphans rl-tradebot; \
              sleep 8; \
-             curl -fsS http://127.0.0.1:8502/_stcore/health; \
-             tail -80 streamlit.log"
+             docker compose -p rl-tradebot ps; \
+             docker logs --tail 120 rl-tradebot"
