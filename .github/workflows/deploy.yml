@@ -52,9 +52,14 @@ jobs:
       - name: Rsync dashboard code to Oracle
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${ORACLE_USER}@${ORACLE_HOST}" \
-            "test '${APP_DIR}' = '/home/ubuntu/rl-tradebot' && \
-             mkdir -p '${APP_DIR}' && \
-             find '${APP_DIR}' -mindepth 1 -maxdepth 1 ! -name '.env' -exec rm -rf {} +"
+            "set -e; \
+             test '${APP_DIR}' = '/home/ubuntu/rl-tradebot'; \
+             tmp_env='/tmp/rl-tradebot.env'; \
+             rm -f \"\$tmp_env\"; \
+             if [ -f '${APP_DIR}/.env' ]; then cp '${APP_DIR}/.env' \"\$tmp_env\"; fi; \
+             rm -rf '${APP_DIR}'; \
+             mkdir -p '${APP_DIR}'; \
+             if [ -f \"\$tmp_env\" ]; then mv \"\$tmp_env\" '${APP_DIR}/.env'; fi"
           rsync -az --delete \
             --exclude='.git' \
             --exclude='.venv' \
@@ -78,8 +83,8 @@ jobs:
              docker rm -f rl-tradebot || true && \
              docker compose -p rl-tradebot down --remove-orphans || true && \
              docker compose -p rl-tradebot build --no-cache && \
+             docker run --rm rl-tradebot:latest python -c \"from pathlib import Path; text=Path('/app/app.py').read_text(); assert 'AI Market Prediction Lab' in text\" && \
+             docker run --rm rl-tradebot:latest python -c \"from ai_tradebot.training.direction_models import train_one; print(train_one.__name__)\" && \
              docker compose -p rl-tradebot up -d --force-recreate --remove-orphans rl-tradebot && \
-             docker exec rl-tradebot python -c \"from pathlib import Path; text=Path('/app/app.py').read_text(); assert 'AI Market Prediction Lab' in text\" && \
-             docker exec rl-tradebot python -c \"from ai_tradebot.training.direction_models import train_one; print(train_one.__name__)\" && \
              docker compose -p rl-tradebot ps && \
              docker logs --tail 80 rl-tradebot"
