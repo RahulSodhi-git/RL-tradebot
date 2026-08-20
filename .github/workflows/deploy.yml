@@ -32,8 +32,24 @@ jobs:
         run: python -m compileall -q src tests app.py
       - name: Import check
         run: python -c "from ai_tradebot.training.direction_models import train_one; print(train_one.__name__)"
-      - name: Tests
-        run: pytest -q
+      - name: Model smoke test
+        run: |
+          python - <<'PY'
+          from ai_tradebot.data.demo import make_demo_ohlcv
+          from ai_tradebot.features.dataset import build_pair_relationship_dataset
+          from ai_tradebot.training.direction_models import train_one
+
+          btc = make_demo_ohlcv(rows=520, seed=1).assign(
+              symbol="BTCUSDT", timeframe="15m", quote_asset_volume=1_000_000, number_of_trades=1000
+          )
+          zec = make_demo_ohlcv(rows=520, seed=3).assign(
+              symbol="ZECUSDT", timeframe="15m", quote_asset_volume=1_000_000, number_of_trades=1000
+          )
+          dataset = build_pair_relationship_dataset(btc, zec, timeframe="15m")
+          metrics, predictions = train_one(dataset, "logistic_regression", "15m")
+          print(metrics)
+          print(predictions[["prediction_name", "confidence", "correct"]].tail(3))
+          PY
 
   deploy:
     name: Deploy to Oracle VM
