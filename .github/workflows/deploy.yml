@@ -59,6 +59,15 @@ jobs:
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${ORACLE_USER}@${ORACLE_HOST}" \
             "set -e; \
              cd ${APP_DIR}; \
+             echo '--- oracle diagnostics ---'; \
+             uname -a; \
+             df -h /; \
+             free -h || true; \
+             docker --version; \
+             docker compose version; \
+             echo '--- app files ---'; \
+             ls -la; \
+             find src/ai_tradebot -maxdepth 3 -type f | sort; \
              mkdir -p data/raw data/processed data/shadow models reports; \
              docker rm -f rl-tradebot 2>/dev/null || true; \
              docker compose -p rl-tradebot down --remove-orphans 2>/dev/null || true; \
@@ -68,4 +77,5 @@ jobs:
              docker compose -p rl-tradebot up -d --force-recreate --remove-orphans rl-tradebot; \
              sleep 8; \
              docker compose -p rl-tradebot ps; \
+             curl -fsS http://127.0.0.1:8502/_stcore/health; \
              docker logs --tail 120 rl-tradebot"
