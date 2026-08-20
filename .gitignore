@@ -1,31 +1,11 @@
-# Python
 __pycache__/
-*.pyc
 .pytest_cache/
-.mypy_cache/
-_old_locked_venv_DELETE_AFTER_RESTART/
-
-# Virtual environments
 .venv/
 venv/
-
-# Secrets and local config
 .env
 .env.*
 !.env.example
-
-# Generated data and model artifacts
-/data/raw/
-/data/processed/
-/data/shadow/
-/models/
-/reports/
-
-# Legacy runtime files
-bot_state.json
-bot.pid
-bot.log
-trade_history.csv
-recommendations.json
-activity.log
-ui_settings.json
+data/
+models/
+reports/
+*.log

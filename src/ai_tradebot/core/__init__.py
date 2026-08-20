@@ -1,2 +1,0 @@
-"""Core types and configuration."""
-

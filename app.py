@@ -1,470 +1,200 @@
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from pathlib import Path
+from datetime import datetime, timezone
 
 import pandas as pd
 import plotly.graph_objects as go
+import requests
 import streamlit as st
 
-from ai_tradebot.data.binance import (
-    CandleRequest,
-    fetch_klines,
-    inspect_market_data,
-    save_candles,
-    test_futures_testnet_account,
-)
-from ai_tradebot.features.dataset import build_pair_relationship_dataset, load_dataset, save_dataset
-from ai_tradebot.training.direction_models import (
-    available_model_names,
-    confusion_for,
-    grouped_metrics,
-    train_one,
-)
 
-
+BINANCE_FUTURES_URL = "https://fapi.binance.com"
 TIMEFRAMES = ["5m", "15m", "1h", "4h", "1d"]
-DEFAULT_MODELS = ["logistic_regression", "random_forest", "hist_gradient_boosting"]
 
 
-st.set_page_config(page_title="AI Market Prediction Lab", page_icon="chart_with_upwards_trend", layout="wide")
-
-
-def init_state() -> None:
-    st.session_state.setdefault("candles", {})
-    st.session_state.setdefault("dataset", pd.DataFrame())
-    st.session_state.setdefault("metrics", pd.DataFrame())
-    st.session_state.setdefault("predictions", {})
-    st.session_state.setdefault("errors", [])
+st.set_page_config(page_title="AI Market Prediction Lab", layout="wide")
 
 
 def main() -> None:
-    init_state()
     st.title("AI Market Prediction Lab")
-    st.caption("Focused first experiment: use BTC movement to help predict ZEC direction. No trading. No orders.")
+    st.caption("Fresh start. First goal: understand BTC and ZEC candles. No trading. No orders.")
 
-    settings = render_settings()
-
-    show_stage_header("1", "Check BTC and ZEC Data", "First we verify Binance candles for the base coin and target coin.")
-    render_data_check(settings)
-
-    show_stage_header("2", "Build BTC -> ZEC Dataset", "Then we create relationship features: BTC move, ZEC move, ZEC strength versus BTC, correlation, and beta.")
-    render_dataset_builder(settings)
-
-    show_stage_header("3", "Train ZEC Prediction Models", "Next we train simple models to predict if ZEC goes UP, DOWN, or NEUTRAL.")
-    render_training(settings)
-
-    show_stage_header("4", "View ZEC Candles + Predictions", "Finally we plot real ZEC candles with model predictions on top.")
-    render_prediction_view()
-
-
-def render_settings() -> dict:
     with st.sidebar:
-        st.header("Simple Setup")
-        source_label = st.radio(
-            "Binance data",
-            ["Mainnet public candles", "Futures testnet candles"],
-            help="Use mainnet public candles for normal model training. Use testnet when you only want to test the sandbox connection.",
-        )
-        source = "testnet" if source_label.startswith("Futures") else "mainnet"
+        st.header("Pair")
+        base_symbol = st.text_input("Base coin", "BTCUSDT").strip().upper()
+        target_symbol = st.text_input("Target coin", "ZECUSDT").strip().upper()
+        timeframe = st.selectbox("Timeframe", TIMEFRAMES, index=1)
+        limit = st.slider("Candles", 100, 1000, 300, 50)
 
-        st.subheader("Pair")
-        base_symbol = st.text_input("Base coin", "BTCUSDT").upper()
-        target_symbol = st.text_input("Target coin", "ZECUSDT").upper()
-        timeframe = st.selectbox("Candle timeframe", TIMEFRAMES, index=1)
+    st.subheader("1. Load Binance Candles")
+    st.write("This checks if Binance gives us clean BTC and ZEC candle data.")
 
-        st.subheader("Data")
-        candle_limit = st.slider("Candles per coin/timeframe", 200, 1500, 600, 100)
-
-        st.subheader("Prediction Label")
-        horizon = st.slider("Predict after N candles", 1, 24, 4)
-        neutral_threshold = st.slider("Neutral zone (%)", 0.05, 3.0, 0.30, 0.05) / 100
-
-        st.subheader("Training")
-        models = st.multiselect("Models", available_model_names(), default=DEFAULT_MODELS)
-        test_fraction = st.slider("Newest data for testing (%)", 10, 40, 25, 5) / 100
-        data_workers = st.slider("Parallel data jobs", 2, 24, 10)
-        model_workers = st.slider("Parallel model jobs", 1, 8, 3)
-
-    return {
-        "source": source,
-        "base_symbol": base_symbol,
-        "target_symbol": target_symbol,
-        "timeframe": timeframe,
-        "timeframes": [timeframe],
-        "candle_limit": candle_limit,
-        "horizon": horizon,
-        "neutral_threshold": neutral_threshold,
-        "models": models,
-        "test_fraction": test_fraction,
-        "data_workers": data_workers,
-        "model_workers": model_workers,
-    }
-
-
-def show_stage_header(number: str, title: str, text: str) -> None:
-    st.divider()
-    st.subheader(f"{number}. {title}")
-    st.write(text)
-
-
-def render_data_check(settings: dict) -> None:
-    left, middle, right = st.columns([1, 1, 1])
-    left.metric("Base coin", settings["base_symbol"])
-    middle.metric("Target coin", settings["target_symbol"])
-    limit = right.slider("Sample candles", 80, 500, 160, 20)
-
-    c1, c2 = st.columns([1, 1])
-    if c1.button("Check candle data", type="primary", use_container_width=True):
+    if st.button("Load BTC and ZEC", type="primary"):
         try:
-            base_info = inspect_market_data(
-                settings["source"], symbol=settings["base_symbol"], timeframe=settings["timeframe"], limit=limit
-            )
-            target_info = inspect_market_data(
-                settings["source"], symbol=settings["target_symbol"], timeframe=settings["timeframe"], limit=limit
-            )
-            st.success(f"Binance connection works: {target_info['source']} endpoint")
-            a, b, c = st.columns(3)
-            a.metric("BTC rows", base_info["rows"])
-            b.metric("ZEC rows", target_info["rows"])
-            c.metric("Columns", len(target_info["columns"]))
-            st.plotly_chart(
-                pair_return_chart(base_info["candles"], target_info["candles"], settings["base_symbol"], settings["target_symbol"]),
-                use_container_width=True,
-            )
-            with st.expander("Show raw Binance rows and columns"):
-                st.write(target_info["columns"])
-                st.dataframe(target_info["candles"].tail(25), use_container_width=True, hide_index=True)
-                st.write(target_info["symbols_sample"])
+            base = fetch_klines(base_symbol, timeframe, limit)
+            target = fetch_klines(target_symbol, timeframe, limit)
         except Exception as exc:
-            st.error(f"Could not read Binance candles: {exc}")
-
-    if c2.button("Check testnet account keys", use_container_width=True):
-        result = test_futures_testnet_account()
-        if result.get("ok"):
-            st.success("Testnet account read works. Keys are loaded.")
-            st.dataframe(pd.DataFrame(result.get("assets", [])), use_container_width=True, hide_index=True)
-        else:
-            st.warning(result.get("reason", "Testnet account check failed."))
-
-
-def render_dataset_builder(settings: dict) -> None:
-    a, b, c, d = st.columns(4)
-    a.metric("Base", settings["base_symbol"])
-    b.metric("Target", settings["target_symbol"])
-    c.metric("Candles each", settings["candle_limit"])
-    d.metric("Download jobs", 2)
-
-    if st.button("Build BTC -> ZEC dataset", type="primary", use_container_width=True):
-        st.session_state.errors = []
-        jobs = [
-            CandleRequest(settings["base_symbol"], settings["timeframe"], settings["candle_limit"]),
-            CandleRequest(settings["target_symbol"], settings["timeframe"], settings["candle_limit"]),
-        ]
-        candles, errors = download_candles(jobs, settings)
-        base_df = candles.get((settings["base_symbol"], settings["timeframe"]), pd.DataFrame())
-        target_df = candles.get((settings["target_symbol"], settings["timeframe"]), pd.DataFrame())
-        try:
-            dataset = build_pair_relationship_dataset(
-                base_df,
-                target_df,
-                base_symbol=settings["base_symbol"],
-                target_symbol=settings["target_symbol"],
-                timeframe=settings["timeframe"],
-                horizon=settings["horizon"],
-                neutral_threshold=settings["neutral_threshold"],
-            )
-        except Exception as exc:
-            st.error(f"Could not build BTC -> ZEC relationship dataset: {exc}")
-            st.session_state.errors = errors
+            st.error(f"Could not load Binance data: {exc}")
             return
 
-        if dataset.empty:
-            st.error("No training dataset was created. Try fewer filters, more candles, or mainnet public candles.")
-            st.session_state.errors = errors
-            return
+        joined = build_relationship_frame(base, target, base_symbol, target_symbol)
+        st.session_state["base"] = base
+        st.session_state["target"] = target
+        st.session_state["joined"] = joined
+        st.success(f"Loaded {len(base)} {base_symbol} candles and {len(target)} {target_symbol} candles.")
 
-        path = save_dataset(dataset)
-        st.session_state.candles = candles
-        st.session_state.dataset = dataset
-        st.session_state.errors = errors
-        st.success(f"BTC -> ZEC dataset ready: {len(dataset):,} rows saved to {path}")
+    base = st.session_state.get("base")
+    target = st.session_state.get("target")
+    joined = st.session_state.get("joined")
 
-    dataset = get_dataset()
-    if not dataset.empty:
-        a, b, c = st.columns(3)
-        a.metric("Dataset rows", f"{len(dataset):,}")
-        b.metric("Target coin", dataset["target_symbol"].iloc[0] if "target_symbol" in dataset else dataset["symbol"].iloc[0])
-        c.metric("Timeframes in dataset", dataset["timeframe"].nunique())
-        left, right = st.columns(2)
-        left.dataframe(label_balance(dataset), use_container_width=True, hide_index=True)
-        right.dataframe(relationship_summary(dataset), use_container_width=True, hide_index=True)
+    if base is None or target is None or joined is None:
+        st.info("Click the button above to load the first dataset.")
+        return
 
-    if st.session_state.errors:
-        with st.expander("Download or build errors"):
-            st.write(st.session_state.errors[:200])
+    render_summary(joined, base_symbol, target_symbol)
+    render_charts(base, target, joined, base_symbol, target_symbol, timeframe)
+    render_rows(joined, base_symbol, target_symbol)
 
 
-def download_candles(jobs: list[CandleRequest], settings: dict) -> tuple[dict[tuple[str, str], pd.DataFrame], list[str]]:
-    candles: dict[tuple[str, str], pd.DataFrame] = {}
-    errors: list[str] = []
-    progress = st.progress(0)
-    status = st.empty()
-    done = 0
+def fetch_klines(symbol: str, interval: str, limit: int) -> pd.DataFrame:
+    response = requests.get(
+        f"{BINANCE_FUTURES_URL}/fapi/v1/klines",
+        params={"symbol": symbol, "interval": interval, "limit": limit},
+        timeout=20,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(f"Binance HTTP {response.status_code}: {response.text[:200]}")
 
-    with ThreadPoolExecutor(max_workers=settings["data_workers"]) as executor:
-        futures = {
-            executor.submit(fetch_klines, job.symbol, job.timeframe, job.limit, settings["source"]): job
-            for job in jobs
+    columns = [
+        "open_time",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "close_time",
+        "quote_asset_volume",
+        "number_of_trades",
+        "taker_buy_base_volume",
+        "taker_buy_quote_volume",
+        "ignore",
+    ]
+    data = pd.DataFrame(response.json(), columns=columns)
+    data["time"] = pd.to_datetime(data["open_time"], unit="ms", utc=True)
+    for column in ["open", "high", "low", "close", "volume"]:
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+    data["symbol"] = symbol
+    return data[["symbol", "time", "open", "high", "low", "close", "volume"]].dropna()
+
+
+def build_relationship_frame(base: pd.DataFrame, target: pd.DataFrame, base_symbol: str, target_symbol: str) -> pd.DataFrame:
+    base_frame = base[["time", "close", "volume"]].rename(
+        columns={"close": f"{base_symbol}_close", "volume": f"{base_symbol}_volume"}
+    )
+    target_frame = target[["time", "open", "high", "low", "close", "volume"]].rename(
+        columns={
+            "open": f"{target_symbol}_open",
+            "high": f"{target_symbol}_high",
+            "low": f"{target_symbol}_low",
+            "close": f"{target_symbol}_close",
+            "volume": f"{target_symbol}_volume",
         }
-        for future in as_completed(futures):
-            job = futures[future]
-            done += 1
-            try:
-                df = future.result()
-                candles[(job.symbol, job.timeframe)] = df
-                save_candles(df, job.symbol, job.timeframe, source=settings["source"])
-                status.info(f"Downloaded {job.symbol} {job.timeframe} ({done}/{len(jobs)})")
-            except Exception as exc:
-                errors.append(f"{job.symbol} {job.timeframe}: {exc}")
-                status.warning(f"Skipped {job.symbol} {job.timeframe}: {exc}")
-            progress.progress(done / max(len(jobs), 1))
-
-    return candles, errors
-
-
-def render_training(settings: dict) -> None:
-    dataset = get_dataset()
-    if dataset.empty:
-        st.info("Build the dataset first.")
-        return
-    if not settings["models"] or not settings["timeframes"]:
-        st.info("Choose at least one model and one timeframe.")
-        return
-
-    jobs = [(model, timeframe) for timeframe in settings["timeframes"] for model in settings["models"]]
-    st.write(f"Ready to train {len(jobs)} model/timeframe runs.")
-
-    if st.button("Train models", type="primary", use_container_width=True):
-        progress = st.progress(0)
-        log_box = st.container(height=240)
-        rows = []
-        predictions = {}
-        errors = []
-        done = 0
-
-        with ThreadPoolExecutor(max_workers=settings["model_workers"]) as executor:
-            futures = {
-                executor.submit(train_one, dataset, model, timeframe, settings["test_fraction"]): (model, timeframe)
-                for model, timeframe in jobs
-            }
-            for future in as_completed(futures):
-                model, timeframe = futures[future]
-                done += 1
-                key = f"{timeframe}/{model}"
-                try:
-                    metrics, pred = future.result()
-                    rows.append(metrics)
-                    predictions[key] = pred
-                    with log_box:
-                        st.success(
-                            f"{key}: accuracy {metrics['accuracy']:.3f}, "
-                            f"UP precision {metrics['up_precision']:.3f}, "
-                            f"DOWN precision {metrics['down_precision']:.3f}"
-                        )
-                except Exception as exc:
-                    errors.append(f"{key}: {exc}")
-                    with log_box:
-                        st.error(f"{key}: {exc}")
-                progress.progress(done / max(len(jobs), 1))
-
-        metrics = pd.DataFrame(rows)
-        if not metrics.empty:
-            metrics = metrics.sort_values(["timeframe", "accuracy"], ascending=[True, False])
-            Path("reports").mkdir(exist_ok=True)
-            metrics.to_csv("reports/direction_model_metrics.csv", index=False)
-
-        st.session_state.metrics = metrics
-        st.session_state.predictions = predictions
-        st.session_state.errors = errors
-        st.success("Training finished.")
-
-    metrics = get_metrics()
-    if not metrics.empty:
-        st.dataframe(metrics, use_container_width=True, hide_index=True)
-
-    if st.session_state.predictions:
-        by_symbol, by_label = grouped_metrics(st.session_state.predictions)
-        left, right = st.columns(2)
-        left.dataframe(by_symbol, use_container_width=True, hide_index=True)
-        right.dataframe(by_label, use_container_width=True, hide_index=True)
-        run_key = st.selectbox("Confusion matrix", sorted(st.session_state.predictions.keys()))
-        st.dataframe(confusion_for(st.session_state.predictions[run_key]), use_container_width=True)
+    )
+    joined = target_frame.merge(base_frame, on="time", how="inner").sort_values("time")
+    joined[f"{base_symbol}_return_1"] = joined[f"{base_symbol}_close"].pct_change()
+    joined[f"{target_symbol}_return_1"] = joined[f"{target_symbol}_close"].pct_change()
+    joined["target_minus_base_return"] = joined[f"{target_symbol}_return_1"] - joined[f"{base_symbol}_return_1"]
+    joined["same_direction"] = joined[f"{base_symbol}_return_1"] * joined[f"{target_symbol}_return_1"] > 0
+    joined["target_beta_30"] = (
+        joined[f"{target_symbol}_return_1"].rolling(30).cov(joined[f"{base_symbol}_return_1"])
+        / joined[f"{base_symbol}_return_1"].rolling(30).var()
+    )
+    joined["target_corr_30"] = joined[f"{target_symbol}_return_1"].rolling(30).corr(joined[f"{base_symbol}_return_1"])
+    joined["loaded_at"] = datetime.now(timezone.utc).isoformat()
+    return joined.dropna().reset_index(drop=True)
 
 
-def render_prediction_view() -> None:
-    predictions = st.session_state.predictions
-    if not predictions:
-        st.info("Train models first. Then this chart will show real candles with UP/DOWN/NEUTRAL predictions.")
-        return
+def render_summary(joined: pd.DataFrame, base_symbol: str, target_symbol: str) -> None:
+    st.subheader("2. Simple Relationship Summary")
+    a, b, c, d = st.columns(4)
+    a.metric("Aligned candles", f"{len(joined):,}")
+    b.metric("Same direction", f"{joined['same_direction'].mean():.1%}")
+    c.metric("Avg beta", f"{joined['target_beta_30'].mean():.2f}")
+    d.metric("Avg correlation", f"{joined['target_corr_30'].mean():.2f}")
 
-    run_key = st.selectbox("Model run", sorted(predictions.keys()), key="chart_run")
-    pred_df = predictions[run_key]
-    symbol = st.selectbox("Coin", sorted(pred_df["symbol"].unique()), key="chart_symbol")
-    rows = pred_df[pred_df["symbol"] == symbol].sort_values("time").tail(220)
-    if rows.empty:
-        st.info("No prediction rows for this coin.")
-        return
-
-    st.plotly_chart(prediction_candle_chart(rows, symbol, run_key), use_container_width=True)
-    st.dataframe(
-        rows[["time", "close", "prediction_name", "confidence", "label_name", "future_return", "correct"]]
-        .tail(80)
-        .sort_values("time", ascending=False),
-        use_container_width=True,
-        hide_index=True,
+    st.write(
+        f"Simple meaning: if beta is above 1, {target_symbol} usually moves more than {base_symbol}. "
+        "Correlation near 1 means they often move together."
     )
 
 
-def prediction_candle_chart(rows: pd.DataFrame, symbol: str, run_key: str) -> go.Figure:
+def render_charts(
+    base: pd.DataFrame,
+    target: pd.DataFrame,
+    joined: pd.DataFrame,
+    base_symbol: str,
+    target_symbol: str,
+    timeframe: str,
+) -> None:
+    left, right = st.columns(2)
+    with left:
+        st.plotly_chart(candle_chart(target, target_symbol, timeframe), use_container_width=True)
+    with right:
+        st.plotly_chart(return_chart(joined, base_symbol, target_symbol), use_container_width=True)
+
+
+def candle_chart(target: pd.DataFrame, symbol: str, timeframe: str) -> go.Figure:
     fig = go.Figure()
     fig.add_trace(
         go.Candlestick(
-            x=rows["time"],
-            open=rows["open"],
-            high=rows["high"],
-            low=rows["low"],
-            close=rows["close"],
-            name="actual candles",
+            x=target["time"],
+            open=target["open"],
+            high=target["high"],
+            low=target["low"],
+            close=target["close"],
+            name=symbol,
         )
     )
-
-    colors = {"UP": "#16803c", "DOWN": "#c2410c", "NEUTRAL": "#475569"}
-    markers = {"UP": "triangle-up", "DOWN": "triangle-down", "NEUTRAL": "circle"}
-    for label in ["UP", "DOWN", "NEUTRAL"]:
-        subset = rows[rows["prediction_name"] == label]
-        if subset.empty:
-            continue
-        fig.add_trace(
-            go.Scatter(
-                x=subset["time"],
-                y=subset["close"],
-                mode="markers",
-                name=f"predicted {label}",
-                marker={
-                    "color": colors[label],
-                    "symbol": markers[label],
-                    "size": 8 + subset["confidence"] * 8,
-                    "line": {"color": "white", "width": 1},
-                },
-                customdata=subset[["label_name", "confidence", "future_return", "correct"]],
-                hovertemplate=(
-                    "actual=%{customdata[0]}<br>"
-                    "confidence=%{customdata[1]:.2f}<br>"
-                    "future return=%{customdata[2]:.2%}<br>"
-                    "correct=%{customdata[3]}<extra></extra>"
-                ),
-            )
-        )
-
     fig.update_layout(
-        title=f"{symbol} {run_key}: real candles and model predictions",
+        title=f"{symbol} candles ({timeframe})",
+        height=500,
         xaxis_rangeslider_visible=False,
-        height=620,
-        margin={"l": 20, "r": 20, "t": 60, "b": 20},
-        legend_orientation="h",
+        margin={"l": 20, "r": 20, "t": 50, "b": 20},
     )
     return fig
 
 
-def raw_candle_chart(rows: pd.DataFrame, symbol: str, timeframe: str, source: str) -> go.Figure:
-    fig = go.Figure()
-    fig.add_trace(
-        go.Candlestick(
-            x=rows["time"],
-            open=rows["open"],
-            high=rows["high"],
-            low=rows["low"],
-            close=rows["close"],
-            name="raw Binance candles",
-        )
-    )
-    fig.update_layout(
-        title=f"{symbol} {timeframe} raw candles from {source}",
-        xaxis_rangeslider_visible=False,
-        height=480,
-        margin={"l": 20, "r": 20, "t": 60, "b": 20},
-    )
-    return fig
-
-
-def pair_return_chart(base: pd.DataFrame, target: pd.DataFrame, base_symbol: str, target_symbol: str) -> go.Figure:
-    joined = base[["time", "close"]].rename(columns={"close": "base_close"}).merge(
-        target[["time", "close"]].rename(columns={"close": "target_close"}),
-        on="time",
-        how="inner",
-    )
-    joined["base_move_pct"] = (joined["base_close"] / joined["base_close"].iloc[0] - 1) * 100
-    joined["target_move_pct"] = (joined["target_close"] / joined["target_close"].iloc[0] - 1) * 100
+def return_chart(joined: pd.DataFrame, base_symbol: str, target_symbol: str) -> go.Figure:
+    chart = joined.copy()
+    chart[f"{base_symbol}_move_pct"] = (chart[f"{base_symbol}_close"] / chart[f"{base_symbol}_close"].iloc[0] - 1) * 100
+    chart[f"{target_symbol}_move_pct"] = (chart[f"{target_symbol}_close"] / chart[f"{target_symbol}_close"].iloc[0] - 1) * 100
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=joined["time"], y=joined["base_move_pct"], mode="lines", name=f"{base_symbol} move %"))
-    fig.add_trace(go.Scatter(x=joined["time"], y=joined["target_move_pct"], mode="lines", name=f"{target_symbol} move %"))
+    fig.add_trace(go.Scatter(x=chart["time"], y=chart[f"{base_symbol}_move_pct"], mode="lines", name=base_symbol))
+    fig.add_trace(go.Scatter(x=chart["time"], y=chart[f"{target_symbol}_move_pct"], mode="lines", name=target_symbol))
     fig.update_layout(
-        title=f"{base_symbol} vs {target_symbol}: percentage move from first candle",
-        height=420,
-        margin={"l": 20, "r": 20, "t": 60, "b": 20},
-        legend_orientation="h",
+        title=f"{base_symbol} vs {target_symbol} percentage move",
+        height=500,
         yaxis_title="Move %",
+        margin={"l": 20, "r": 20, "t": 50, "b": 20},
     )
     return fig
 
 
-def relationship_summary(dataset: pd.DataFrame) -> pd.DataFrame:
-    columns = {
-        "BTC/ZEC same direction": (dataset["base_return_1"] * dataset["return_1"] > 0).mean(),
-        "Avg ZEC move": dataset["return_1"].mean(),
-        "Avg BTC move": dataset["base_return_1"].mean(),
-        "Avg ZEC minus BTC": dataset["target_vs_base_return_1"].mean(),
-        "Avg 20-candle beta": dataset["target_base_beta_20"].mean(),
-        "Avg 20-candle correlation": dataset["target_base_corr_20"].mean(),
-    }
-    return pd.DataFrame(
-        [{"check": key, "value": round(float(value), 4) if pd.notna(value) else 0.0} for key, value in columns.items()]
-    )
-
-
-def get_dataset() -> pd.DataFrame:
-    if not st.session_state.dataset.empty:
-        return st.session_state.dataset
-    path = Path("data/processed/direction_dataset.csv")
-    if path.exists():
-        try:
-            st.session_state.dataset = load_dataset()
-        except Exception:
-            pass
-    return st.session_state.dataset
-
-
-def get_metrics() -> pd.DataFrame:
-    if not st.session_state.metrics.empty:
-        return st.session_state.metrics
-    path = Path("reports/direction_model_metrics.csv")
-    if path.exists():
-        try:
-            st.session_state.metrics = pd.read_csv(path)
-        except Exception:
-            pass
-    return st.session_state.metrics
-
-
-def label_balance(dataset: pd.DataFrame) -> pd.DataFrame:
-    return (
-        dataset.groupby(["timeframe", "label_name"])
-        .size()
-        .reset_index(name="rows")
-        .sort_values(["timeframe", "label_name"])
-    )
+def render_rows(joined: pd.DataFrame, base_symbol: str, target_symbol: str) -> None:
+    st.subheader("3. Raw Relationship Rows")
+    columns = [
+        "time",
+        f"{base_symbol}_close",
+        f"{target_symbol}_close",
+        f"{base_symbol}_return_1",
+        f"{target_symbol}_return_1",
+        "target_minus_base_return",
+        "same_direction",
+        "target_beta_30",
+        "target_corr_30",
+    ]
+    st.dataframe(joined[columns].tail(80).sort_values("time", ascending=False), use_container_width=True, hide_index=True)
 
 
 if __name__ == "__main__":

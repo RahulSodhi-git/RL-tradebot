@@ -3,12 +3,6 @@ services:
     build: .
     image: rl-tradebot:latest
     container_name: rl-tradebot
-    working_dir: /app
-    command: streamlit run app.py --server.port 8502 --server.address 0.0.0.0 --server.headless true --browser.gatherUsageStats false
-    volumes:
-      - ./data:/app/data
-      - ./models:/app/models
-      - ./reports:/app/reports
     ports:
       - "8502:8502"
     restart: unless-stopped

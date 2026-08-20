@@ -1,58 +1,25 @@
 # AI Market Prediction Lab
 
-Fresh ML-first trading research dashboard.
+Fresh start.
 
-This project is currently **prediction only**. It does not place live orders.
-The first serious experiment is deliberately small:
+The first version only checks the relationship between BTC and ZEC candles.
+It does not train models yet. It does not place trades.
 
-```text
-BTCUSDT movement -> predict ZECUSDT direction
-```
+## What It Shows
 
-## Current Experiment
-
-The dashboard answers simple questions:
-
-- Did BTC move first?
-- Did ZEC move with BTC or against BTC?
-- Did ZEC move more strongly than BTC?
-- Can a simple model predict if ZEC goes UP, DOWN, or NEUTRAL after a few candles?
-
-## Dashboard Flow
-
-1. Check BTC and ZEC candle data from Binance.
-2. Build a BTC -> ZEC relationship dataset.
-3. Train simple ML models.
-4. View ZEC candles with predictions and correctness.
-
-## Features Used
-
-The model uses ZEC candle features plus BTC relationship features:
-
-- ZEC recent returns
-- ZEC RSI, EMA distance, volatility, volume spike
-- BTC recent returns
-- ZEC move minus BTC move
-- ZEC/BTC rolling correlation
-- ZEC/BTC rolling beta
-- previous BTC movement as a lead signal
+- ZEC candlestick chart
+- BTC vs ZEC percentage movement
+- how often BTC and ZEC move in the same direction
+- simple ZEC/BTC beta
+- simple ZEC/BTC correlation
 
 ## Run Locally
 
 ```powershell
-python -m pip install -r requirements.txt
-pip install -e .
+pip install -r requirements.txt
 streamlit run app.py
 ```
 
-Run tests:
+## Deploy
 
-```powershell
-pytest -q
-```
-
-## Deployment
-
-Pushes to `main` deploy the dashboard to Oracle through GitHub Actions.
-
-The Oracle deploy wipes the old `/home/ubuntu/rl-tradebot` app files first, then copies the current clean dashboard and rebuilds Docker.
+Push to `main`. GitHub Actions deploys to Oracle on port `8502`.

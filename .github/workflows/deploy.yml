@@ -1,4 +1,4 @@
-name: Deploy ML Dashboard to Oracle
+name: Deploy Dashboard to Oracle
 
 on:
   push:
@@ -11,7 +11,7 @@ env:
   APP_DIR: "/home/ubuntu/rl-tradebot"
 
 concurrency:
-  group: deploy-oracle-ml-dashboard
+  group: deploy-oracle-dashboard
   cancel-in-progress: true
 
 jobs:
@@ -28,54 +28,36 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${ORACLE_HOST}" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Rsync dashboard code to Oracle
+      - name: Copy fresh code to Oracle
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${ORACLE_USER}@${ORACLE_HOST}" \
             "set -e; \
              test '${APP_DIR}' = '/home/ubuntu/rl-tradebot'; \
-             tmp_env='/tmp/rl-tradebot.env'; \
-             rm -f \"\$tmp_env\"; \
-             if [ -f '${APP_DIR}/.env' ]; then cp '${APP_DIR}/.env' \"\$tmp_env\"; fi; \
              rm -rf '${APP_DIR}'; \
-             mkdir -p '${APP_DIR}'; \
-             if [ -f \"\$tmp_env\" ]; then mv \"\$tmp_env\" '${APP_DIR}/.env'; fi"
+             mkdir -p '${APP_DIR}'"
           rsync -az --delete \
             --exclude='.git' \
             --exclude='.venv' \
-            --exclude='__pycache__' \
             --exclude='.env' \
-            --exclude='data/raw' \
-            --exclude='data/processed' \
-            --exclude='data/shadow' \
-            --exclude='models' \
-            --exclude='reports' \
-            --exclude='*.log' \
-            --exclude='.streamlit/secrets.toml' \
+            --exclude='__pycache__' \
             -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
             ./ "${ORACLE_USER}@${ORACLE_HOST}:${APP_DIR}/"
 
-      - name: Build and restart Docker dashboard
+      - name: Build and start Docker dashboard
         run: |
           ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "${ORACLE_USER}@${ORACLE_HOST}" \
             "set -e; \
-             cd ${APP_DIR}; \
-             echo '--- oracle diagnostics ---'; \
-             uname -a; \
+             cd '${APP_DIR}'; \
+             echo '--- diagnostics ---'; \
+             pwd; \
              df -h /; \
-             free -h || true; \
              docker --version; \
              docker compose version; \
-             echo '--- app files ---'; \
-             ls -la; \
-             find src/ai_tradebot -maxdepth 3 -type f | sort; \
-             mkdir -p data/raw data/processed data/shadow models reports; \
              docker rm -f rl-tradebot 2>/dev/null || true; \
              docker compose -p rl-tradebot down --remove-orphans 2>/dev/null || true; \
              docker compose -p rl-tradebot build --no-cache; \
-             docker run --rm rl-tradebot:latest python -c \"from pathlib import Path; text=Path('/app/app.py').read_text(); assert 'AI Market Prediction Lab' in text\"; \
-             docker run --rm rl-tradebot:latest python -c \"from ai_tradebot.training.direction_models import train_one; print(train_one.__name__)\"; \
-             docker compose -p rl-tradebot up -d --force-recreate --remove-orphans rl-tradebot; \
-             sleep 8; \
-             docker compose -p rl-tradebot ps; \
+             docker compose -p rl-tradebot up -d --force-recreate --remove-orphans; \
+             sleep 10; \
              curl -fsS http://127.0.0.1:8502/_stcore/health; \
-             docker logs --tail 120 rl-tradebot"
+             docker compose -p rl-tradebot ps; \
+             docker logs --tail 80 rl-tradebot"
