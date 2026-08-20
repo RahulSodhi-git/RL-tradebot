@@ -12,7 +12,7 @@ from sklearn.metrics import accuracy_score, confusion_matrix, precision_score
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 
-from ai_tradebot.features.dataset import feature_columns
+from ai_tradebot.features.dataset import model_feature_columns
 
 
 MODEL_DIR = Path("models/direction")
@@ -104,7 +104,9 @@ def train_one(
     split = int(len(data) * (1 - test_fraction))
     train = data.iloc[:split]
     test = data.iloc[split:]
-    features = feature_columns()
+    features = model_feature_columns(data)
+    if not features:
+        raise ValueError("no model features found in dataset")
     model = make_model(model_name)
     model.fit(train[features], train["label"])
     pred = model.predict(test[features])
@@ -188,4 +190,3 @@ def _predict_proba(model, x: pd.DataFrame, pred) -> list[float]:
         probs = model.predict_proba(x)
         return [float(row[classes.index(label)]) if label in classes else 0.0 for row, label in zip(probs, pred)]
     return [0.5 for _ in range(len(x))]
-

@@ -1,69 +1,58 @@
-# AI Tradebot Lab
+# AI Market Prediction Lab
 
-Fresh ML/RL-first trading research system.
+Fresh ML-first trading research dashboard.
 
-This project starts in **research and shadow mode only**. It does not place live orders.
-The goal is to build reliable market understanding before any execution code exists.
-
-## Step 1: Foundation
-
-The first version contains:
-
-- Typed market/trade schemas.
-- Feature engineering from OHLCV candles.
-- Specialist agents:
-  - regime agent
-  - direction agent
-  - volatility agent
-  - flow agent
-  - risk agent
-- A decision engine that combines agent opinions.
-- A shadow logger for training data.
-- A simple CLI smoke run.
-
-## Project Layout
+This project is currently **prediction only**. It does not place live orders.
+The first serious experiment is deliberately small:
 
 ```text
-src/ai_tradebot/
-  agents/           Specialist agents.
-  core/             Shared schemas and config.
-  data/             Data loading helpers.
-  features/         Feature engineering.
-  training/         Dataset and shadow logging tools.
-  decision_engine.py
-  cli.py
-tests/
-  test_smoke.py
+BTCUSDT movement -> predict ZECUSDT direction
 ```
 
-The old rule-based bot has been preserved in `_legacy_rule_bot/`.
+## Current Experiment
 
-## Run
+The dashboard answers simple questions:
+
+- Did BTC move first?
+- Did ZEC move with BTC or against BTC?
+- Did ZEC move more strongly than BTC?
+- Can a simple model predict if ZEC goes UP, DOWN, or NEUTRAL after a few candles?
+
+## Dashboard Flow
+
+1. Check BTC and ZEC candle data from Binance.
+2. Build a BTC -> ZEC relationship dataset.
+3. Train simple ML models.
+4. View ZEC candles with predictions and correctness.
+
+## Features Used
+
+The model uses ZEC candle features plus BTC relationship features:
+
+- ZEC recent returns
+- ZEC RSI, EMA distance, volatility, volume spike
+- BTC recent returns
+- ZEC move minus BTC move
+- ZEC/BTC rolling correlation
+- ZEC/BTC rolling beta
+- previous BTC movement as a lead signal
+
+## Run Locally
 
 ```powershell
 python -m pip install -r requirements.txt
-python -m ai_tradebot.cli --demo
-python -m pytest
+pip install -e .
+streamlit run app.py
 ```
 
-Run the Streamlit research dashboard:
+Run tests:
 
 ```powershell
-streamlit run app.py
+pytest -q
 ```
 
 ## Deployment
 
-Pushes to `main` deploy the ML dashboard to Oracle through GitHub Actions.
-See `DEPLOY.md`.
+Pushes to `main` deploy the dashboard to Oracle through GitHub Actions.
 
-If running directly from the repo without installing the package:
-
-```powershell
-$env:PYTHONPATH = "src"
-python -m ai_tradebot.cli --demo
-```
-
-## Design Rule
-
-Models advise. Risk controls decide what is allowed. Execution comes later.
+The Oracle deploy wipes the old `/home/ubuntu/rl-tradebot` app files first, then copies the current clean dashboard and rebuilds Docker.

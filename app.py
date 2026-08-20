@@ -10,12 +10,11 @@ import streamlit as st
 from ai_tradebot.data.binance import (
     CandleRequest,
     fetch_klines,
-    get_usdt_perp_symbols,
     inspect_market_data,
     save_candles,
     test_futures_testnet_account,
 )
-from ai_tradebot.features.dataset import build_direction_dataset, load_dataset, save_dataset
+from ai_tradebot.features.dataset import build_pair_relationship_dataset, load_dataset, save_dataset
 from ai_tradebot.training.direction_models import (
     available_model_names,
     confusion_for,
@@ -42,20 +41,20 @@ def init_state() -> None:
 def main() -> None:
     init_state()
     st.title("AI Market Prediction Lab")
-    st.caption("Simple first version: get Binance candles, train direction models, and check if UP/DOWN predictions were correct. No trading. No orders.")
+    st.caption("Focused first experiment: use BTC movement to help predict ZEC direction. No trading. No orders.")
 
     settings = render_settings()
 
-    show_stage_header("1", "Check Binance Data", "First we verify what Binance gives us: columns, candles, and sample symbols.")
+    show_stage_header("1", "Check BTC and ZEC Data", "First we verify Binance candles for the base coin and target coin.")
     render_data_check(settings)
 
-    show_stage_header("2", "Build Prediction Dataset", "Then we turn candles into features and labels: did price go UP, DOWN, or stay NEUTRAL after the chosen horizon?")
+    show_stage_header("2", "Build BTC -> ZEC Dataset", "Then we create relationship features: BTC move, ZEC move, ZEC strength versus BTC, correlation, and beta.")
     render_dataset_builder(settings)
 
-    show_stage_header("3", "Train Models", "Next we train multiple models in parallel for each timeframe and measure prediction quality.")
+    show_stage_header("3", "Train ZEC Prediction Models", "Next we train simple models to predict if ZEC goes UP, DOWN, or NEUTRAL.")
     render_training(settings)
 
-    show_stage_header("4", "View Candles + Predictions", "Finally we plot real candles with model predictions on top, so you can see where the model was right or wrong.")
+    show_stage_header("4", "View ZEC Candles + Predictions", "Finally we plot real ZEC candles with model predictions on top.")
     render_prediction_view()
 
 
@@ -69,11 +68,13 @@ def render_settings() -> dict:
         )
         source = "testnet" if source_label.startswith("Futures") else "mainnet"
 
+        st.subheader("Pair")
+        base_symbol = st.text_input("Base coin", "BTCUSDT").upper()
+        target_symbol = st.text_input("Target coin", "ZECUSDT").upper()
+        timeframe = st.selectbox("Candle timeframe", TIMEFRAMES, index=1)
+
         st.subheader("Data")
-        symbols_limit = st.slider("Coins to use", 5, 260, 25, 5)
-        timeframes = st.multiselect("Candle timeframes", TIMEFRAMES, default=["15m", "1h", "4h"])
         candle_limit = st.slider("Candles per coin/timeframe", 200, 1500, 600, 100)
-        min_quote_volume = st.number_input("Minimum 24h quote volume", min_value=0, value=50_000_000, step=10_000_000)
 
         st.subheader("Prediction Label")
         horizon = st.slider("Predict after N candles", 1, 24, 4)
@@ -87,10 +88,11 @@ def render_settings() -> dict:
 
     return {
         "source": source,
-        "symbols_limit": symbols_limit,
-        "timeframes": timeframes,
+        "base_symbol": base_symbol,
+        "target_symbol": target_symbol,
+        "timeframe": timeframe,
+        "timeframes": [timeframe],
         "candle_limit": candle_limit,
-        "min_quote_volume": min_quote_volume,
         "horizon": horizon,
         "neutral_threshold": neutral_threshold,
         "models": models,
@@ -108,24 +110,32 @@ def show_stage_header(number: str, title: str, text: str) -> None:
 
 def render_data_check(settings: dict) -> None:
     left, middle, right = st.columns([1, 1, 1])
-    symbol = left.text_input("Sample coin", "BTCUSDT").upper()
-    timeframe = middle.selectbox("Sample timeframe", TIMEFRAMES, index=2)
+    left.metric("Base coin", settings["base_symbol"])
+    middle.metric("Target coin", settings["target_symbol"])
     limit = right.slider("Sample candles", 80, 500, 160, 20)
 
     c1, c2 = st.columns([1, 1])
     if c1.button("Check candle data", type="primary", use_container_width=True):
         try:
-            info = inspect_market_data(settings["source"], symbol=symbol, timeframe=timeframe, limit=limit)
-            st.success(f"Binance connection works: {info['source']} endpoint")
+            base_info = inspect_market_data(
+                settings["source"], symbol=settings["base_symbol"], timeframe=settings["timeframe"], limit=limit
+            )
+            target_info = inspect_market_data(
+                settings["source"], symbol=settings["target_symbol"], timeframe=settings["timeframe"], limit=limit
+            )
+            st.success(f"Binance connection works: {target_info['source']} endpoint")
             a, b, c = st.columns(3)
-            a.metric("Rows returned", info["rows"])
-            b.metric("Available sample symbols", info["symbols_sample_count"])
-            c.metric("Columns", len(info["columns"]))
-            st.plotly_chart(raw_candle_chart(info["candles"], symbol, timeframe, settings["source"]), use_container_width=True)
+            a.metric("BTC rows", base_info["rows"])
+            b.metric("ZEC rows", target_info["rows"])
+            c.metric("Columns", len(target_info["columns"]))
+            st.plotly_chart(
+                pair_return_chart(base_info["candles"], target_info["candles"], settings["base_symbol"], settings["target_symbol"]),
+                use_container_width=True,
+            )
             with st.expander("Show raw Binance rows and columns"):
-                st.write(info["columns"])
-                st.dataframe(info["candles"].tail(25), use_container_width=True, hide_index=True)
-                st.write(info["symbols_sample"])
+                st.write(target_info["columns"])
+                st.dataframe(target_info["candles"].tail(25), use_container_width=True, hide_index=True)
+                st.write(target_info["symbols_sample"])
         except Exception as exc:
             st.error(f"Could not read Binance candles: {exc}")
 
@@ -139,37 +149,35 @@ def render_data_check(settings: dict) -> None:
 
 
 def render_dataset_builder(settings: dict) -> None:
-    jobs_count = settings["symbols_limit"] * len(settings["timeframes"])
     a, b, c, d = st.columns(4)
-    a.metric("Coins", settings["symbols_limit"])
-    b.metric("Timeframes", len(settings["timeframes"]))
+    a.metric("Base", settings["base_symbol"])
+    b.metric("Target", settings["target_symbol"])
     c.metric("Candles each", settings["candle_limit"])
-    d.metric("Download jobs", jobs_count)
+    d.metric("Download jobs", 2)
 
-    disabled = not settings["timeframes"]
-    if st.button("Build dataset", type="primary", disabled=disabled, use_container_width=True):
+    if st.button("Build BTC -> ZEC dataset", type="primary", use_container_width=True):
         st.session_state.errors = []
-        try:
-            symbols = get_usdt_perp_symbols(
-                limit=settings["symbols_limit"],
-                min_quote_volume=settings["min_quote_volume"],
-                source=settings["source"],
-            )
-        except Exception as exc:
-            st.error(f"Could not load symbol list from Binance: {exc}")
-            return
-
         jobs = [
-            CandleRequest(symbol, timeframe, settings["candle_limit"])
-            for symbol in symbols
-            for timeframe in settings["timeframes"]
+            CandleRequest(settings["base_symbol"], settings["timeframe"], settings["candle_limit"]),
+            CandleRequest(settings["target_symbol"], settings["timeframe"], settings["candle_limit"]),
         ]
         candles, errors = download_candles(jobs, settings)
-        dataset = build_direction_dataset(
-            candles,
-            horizon=settings["horizon"],
-            neutral_threshold=settings["neutral_threshold"],
-        )
+        base_df = candles.get((settings["base_symbol"], settings["timeframe"]), pd.DataFrame())
+        target_df = candles.get((settings["target_symbol"], settings["timeframe"]), pd.DataFrame())
+        try:
+            dataset = build_pair_relationship_dataset(
+                base_df,
+                target_df,
+                base_symbol=settings["base_symbol"],
+                target_symbol=settings["target_symbol"],
+                timeframe=settings["timeframe"],
+                horizon=settings["horizon"],
+                neutral_threshold=settings["neutral_threshold"],
+            )
+        except Exception as exc:
+            st.error(f"Could not build BTC -> ZEC relationship dataset: {exc}")
+            st.session_state.errors = errors
+            return
 
         if dataset.empty:
             st.error("No training dataset was created. Try fewer filters, more candles, or mainnet public candles.")
@@ -180,17 +188,17 @@ def render_dataset_builder(settings: dict) -> None:
         st.session_state.candles = candles
         st.session_state.dataset = dataset
         st.session_state.errors = errors
-        st.success(f"Dataset ready: {len(dataset):,} rows saved to {path}")
+        st.success(f"BTC -> ZEC dataset ready: {len(dataset):,} rows saved to {path}")
 
     dataset = get_dataset()
     if not dataset.empty:
         a, b, c = st.columns(3)
         a.metric("Dataset rows", f"{len(dataset):,}")
-        b.metric("Coins in dataset", dataset["symbol"].nunique())
+        b.metric("Target coin", dataset["target_symbol"].iloc[0] if "target_symbol" in dataset else dataset["symbol"].iloc[0])
         c.metric("Timeframes in dataset", dataset["timeframe"].nunique())
         left, right = st.columns(2)
         left.dataframe(label_balance(dataset), use_container_width=True, hide_index=True)
-        right.dataframe(dataset.groupby("timeframe").size().reset_index(name="rows"), use_container_width=True, hide_index=True)
+        right.dataframe(relationship_summary(dataset), use_container_width=True, hide_index=True)
 
     if st.session_state.errors:
         with st.expander("Download or build errors"):
@@ -388,6 +396,42 @@ def raw_candle_chart(rows: pd.DataFrame, symbol: str, timeframe: str, source: st
         margin={"l": 20, "r": 20, "t": 60, "b": 20},
     )
     return fig
+
+
+def pair_return_chart(base: pd.DataFrame, target: pd.DataFrame, base_symbol: str, target_symbol: str) -> go.Figure:
+    joined = base[["time", "close"]].rename(columns={"close": "base_close"}).merge(
+        target[["time", "close"]].rename(columns={"close": "target_close"}),
+        on="time",
+        how="inner",
+    )
+    joined["base_move_pct"] = (joined["base_close"] / joined["base_close"].iloc[0] - 1) * 100
+    joined["target_move_pct"] = (joined["target_close"] / joined["target_close"].iloc[0] - 1) * 100
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=joined["time"], y=joined["base_move_pct"], mode="lines", name=f"{base_symbol} move %"))
+    fig.add_trace(go.Scatter(x=joined["time"], y=joined["target_move_pct"], mode="lines", name=f"{target_symbol} move %"))
+    fig.update_layout(
+        title=f"{base_symbol} vs {target_symbol}: percentage move from first candle",
+        height=420,
+        margin={"l": 20, "r": 20, "t": 60, "b": 20},
+        legend_orientation="h",
+        yaxis_title="Move %",
+    )
+    return fig
+
+
+def relationship_summary(dataset: pd.DataFrame) -> pd.DataFrame:
+    columns = {
+        "BTC/ZEC same direction": (dataset["base_return_1"] * dataset["return_1"] > 0).mean(),
+        "Avg ZEC move": dataset["return_1"].mean(),
+        "Avg BTC move": dataset["base_return_1"].mean(),
+        "Avg ZEC minus BTC": dataset["target_vs_base_return_1"].mean(),
+        "Avg 20-candle beta": dataset["target_base_beta_20"].mean(),
+        "Avg 20-candle correlation": dataset["target_base_corr_20"].mean(),
+    }
+    return pd.DataFrame(
+        [{"check": key, "value": round(float(value), 4) if pd.notna(value) else 0.0} for key, value in columns.items()]
+    )
 
 
 def get_dataset() -> pd.DataFrame:
