@@ -1,5 +1,21 @@
 # RL Tradebot dashboard
 
+## Download the trained project
+
+Download the repository source and `rl-tradebot-trained-artifacts.zip` from
+[GitHub Releases](https://github.com/RahulSodhi-git/RL-tradebot/releases).
+Extract the artifact ZIP **inside the repository's `rl_lab` folder**. It contains
+`models`, `reports` and `data` folders. The resulting paths must be
+`rl_lab/models/ppo_universal_1h.zip`, `rl_lab/reports/` and `rl_lab/data/`.
+No retraining is required to obtain the saved models. Release artifacts include
+the downloaded training archives, processed data, normalization metadata and
+evaluation reports. The cloud Python virtual environment is intentionally omitted;
+Docker installs the runtime dependencies on your laptop.
+
+Credentials are excluded. Any key previously committed to Git remains exposed in
+history even after removal from the current branch: revoke it and use replacement
+demo credentials only in your local `.env` file.
+
 Streamlit monitoring dashboard and experimental PPO training pipeline for Binance
 Futures demo. The dashboard is read-only. Automatic trading, continuous learning
 and unattended exit management are not complete or verified.
