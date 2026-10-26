@@ -2,12 +2,10 @@
 
 ## Download the trained project
 
-Download the repository source and `rl-tradebot-trained-artifacts.zip` from
-[GitHub Releases](https://github.com/RahulSodhi-git/RL-tradebot/releases).
-Extract the artifact ZIP **inside the repository's `rl_lab` folder**. It contains
-`models`, `reports` and `data` folders. The resulting paths must be
-`rl_lab/models/ppo_universal_1h.zip`, `rl_lab/reports/` and `rl_lab/data/`.
-No retraining is required to obtain the saved models. Release artifacts include
+Download the repository with **Code → Download ZIP**, or clone it with Git.
+Trained artifacts are included directly in `rl_lab/models`, `rl_lab/reports`
+and `rl_lab/data`. No separate release download or retraining is required.
+The included artifacts contain
 the downloaded training archives, processed data, normalization metadata and
 evaluation reports. The cloud Python virtual environment is intentionally omitted;
 Docker installs the runtime dependencies on your laptop.
@@ -36,10 +34,9 @@ Enter newly generated demo keys in `.env` locally. Do not commit or share keys.
 Open http://localhost:8501 and enable account monitoring. Keep Docker Desktop
 running and prevent laptop sleep. Stop with `docker compose down`.
 
-Training data, trained model binaries and reports are excluded from Git and the
-container image. Copy existing artifacts into `rl_lab/data`, `rl_lab/models` and
-`rl_lab/reports` to view results or use trained models. Without them the dashboard
-still starts and can monitor your demo account; it shows missing reports clearly.
+Training data, trained model binaries and reports are included in this repository
+but excluded from the container image. Docker Compose mounts these local folders
+into the dashboard. The source download is large because it includes training data.
 
 ## CI/CD
 
