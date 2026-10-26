@@ -1,25 +1,37 @@
-# AI Market Prediction Lab
+# RL Tradebot dashboard
 
-Fresh start.
+Streamlit monitoring dashboard and experimental PPO training pipeline for Binance
+Futures demo. The dashboard is read-only. Automatic trading, continuous learning
+and unattended exit management are not complete or verified.
 
-The first version only checks the relationship between BTC and ZEC candles.
-It does not train models yet. It does not place trades.
+## Run on your laptop
 
-## What It Shows
-
-- ZEC candlestick chart
-- BTC vs ZEC percentage movement
-- how often BTC and ZEC move in the same direction
-- simple ZEC/BTC beta
-- simple ZEC/BTC correlation
-
-## Run Locally
+Install Docker Desktop and Git. In PowerShell:
 
 ```powershell
-pip install -r requirements.txt
-streamlit run app.py
+git clone https://github.com/RahulSodhi-git/RL-tradebot.git
+cd RL-tradebot
+Copy-Item .env.example .env
+notepad .env
+docker compose up -d --build
 ```
 
-## Deploy
+Enter newly generated demo keys in `.env` locally. Do not commit or share keys.
+Open http://localhost:8501 and enable account monitoring. Keep Docker Desktop
+running and prevent laptop sleep. Stop with `docker compose down`.
 
-Push to `main`. GitHub Actions deploys to Oracle on port `8502`.
+Training data, trained model binaries and reports are excluded from Git and the
+container image. Copy existing artifacts into `rl_lab/data`, `rl_lab/models` and
+`rl_lab/reports` to view results or use trained models. Without them the dashboard
+still starts and can monitor your demo account; it shows missing reports clearly.
+
+## CI/CD
+
+GitHub Actions validates Python and Compose, builds the image and checks its
+Streamlit health endpoint on pushes and pull requests. Successful checks for a
+push to `main` publish `ghcr.io/rahulsodhi-git/rl-tradebot:latest` and a commit tag.
+Publishing an image does not deploy it to your laptop or start trades.
+No Binance keys are needed in GitHub Actions. Account connectivity needs demo
+keys and network access on the machine running Docker.
+
+See [manual Python setup](rl_lab/DASHBOARD.md) for running without Docker.

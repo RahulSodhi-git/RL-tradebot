@@ -1,0 +1,30 @@
+name: Dashboard CI
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  container:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile Python
+        run: python -m compileall -q rl_lab
+      - name: Validate Compose
+        run: docker compose config --quiet
+      - name: Build container
+        run: docker build -t tradebot-ci .
+      - name: Smoke test dashboard
+        shell: bash
+        run: |
+          docker run -d --name dashboard -p 127.0.0.1:8501:8501 tradebot-ci
+          for attempt in $(seq 1 30); do
+            if curl --fail http://127.0.0.1:8501/_stcore/health; then exit 0; fi
+            sleep 2
+          done
+          docker logs dashboard
+          exit 1
+      - name: Stop test container
+        if: always()
+        run: docker rm -f dashboard || true

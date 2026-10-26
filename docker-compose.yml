@@ -1,8 +1,15 @@
 services:
-  rl-tradebot:
+  dashboard:
     build: .
-    image: rl-tradebot:latest
-    container_name: rl-tradebot
     ports:
-      - "8502:8502"
+      - "127.0.0.1:8501:8501"
     restart: unless-stopped
+    environment:
+      BINANCE_TESTNET_API_KEY: ${BINANCE_TESTNET_API_KEY:-}
+      BINANCE_TESTNET_SECRET: ${BINANCE_TESTNET_SECRET:-}
+    volumes:
+      - ./rl_lab/reports:/app/rl_lab/reports:ro
+      - ./rl_lab/models:/app/rl_lab/models:ro
+      - ./rl_lab/data:/app/rl_lab/data:ro
+    security_opt:
+      - no-new-privileges:true
